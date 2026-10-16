@@ -1,0 +1,35 @@
+{
+	"info": {
+		"id": "ru.comx",
+		"name": "Com-X",
+		"altNames": ["ComX", "Ком-Икс", "com-x.life"],
+		"version": 1,
+		"url": "https://com-x.life",
+		"contentRating": 1,
+		"languages": ["ru"],
+		"minAppVersion": "0.7.1"
+	},
+	"listings": [
+		{
+			"id": "latest",
+			"name": "Обновления"
+		},
+		{
+			"id": "manga",
+			"name": "Манга"
+		},
+		{
+			"id": "manhwa",
+			"name": "Манхва"
+		},
+		{
+			"id": "manhua",
+			"name": "Маньхуа"
+		}
+	],
+	"config": {
+		"supportsTagSearch": true,
+		"hidesFiltersWhileSearching": true,
+		"maximumParallelRequests": 2
+	}
+}
