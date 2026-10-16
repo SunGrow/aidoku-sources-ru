@@ -21,6 +21,25 @@ Aidoku 0.7.1 or newer is required.
 | WaManga | [wamanga.ru](https://wamanga.ru) | JSON API. Search, filters (type, status, genre, year), listings, deep links. |
 | AComics | [acomics.ru](https://acomics.ru) | Webcomics. Each strip is a single-page chapter. Search, genre/rating filters, listings, deep links. |
 
+### Sites not implemented yet
+
+These were attempted and are blocked by anti-bot measures. Every result below
+was observed from a connection egressing in Singapore, so some are plausibly
+geo- or IP-based and may behave differently from a Russian network — if a site
+loads normally for you, it is worth retrying.
+
+| Site | What happens |
+|---|---|
+| comx.life | Anti-adblock gate (`router.parklogic.com`) returns a JS interstitial to every HTTP client regardless of user agent. In a real browser it redirects to affiliate landing pages instead of content, so the page markup could not be observed. Note `comi-x.life` does not resolve; the live domain is `comx.life`. |
+| readmanga / selfmanga / seimanga | Catalog HTML loads, but DDoS-Guard serves decoy images to untrusted clients: image requests return 77 bytes containing an unrelated Wikipedia URL rather than the page. Needs decoy detection plus mirror fallback. |
+| remanga.org, mangalib.me | HTTP 403 on both the site and the API. |
+| desu.me | Host unreachable. |
+
+Implementing a source against markup that cannot be observed means guessing
+selectors, and the two sources that are implemented both needed selectors that
+differ from the public reference parsers — so guessing would likely ship
+something broken.
+
 ## Building
 
 Requires [Rust](https://rustup.rs) and the Aidoku CLI:
