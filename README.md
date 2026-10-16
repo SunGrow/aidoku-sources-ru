@@ -48,6 +48,13 @@ recommendations). Sign in from the source's settings page in Aidoku.
 - **AComics** uses Aidoku's web sign-in: it opens the site's own login page so
   the password is entered on the site rather than handled by the source, and
   the session cookie is reused for requests. Logging out clears those cookies.
+
+  As on Com-X, the cookies the web view returns are stored and attached to
+  later requests rather than left to the app. Anonymous browsing here sets
+  no cookies at all, so that is the only jar the source keeps. The age gate
+  has a cookie of its own that this header can displace, which is harmless:
+  the reader already re-posts the gate whenever a strip arrives without its
+  image, so the cost is one extra request on a rated comic.
 - **Com-X** also uses web sign-in. The site has no standalone login page,
   so the setting opens the homepage — use the **Войти** button in the header.
   Being signed in is detected from the page itself rather than by guessing a

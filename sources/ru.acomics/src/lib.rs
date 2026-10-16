@@ -11,7 +11,11 @@ use aidoku::{
 	Viewer, WebLoginHandler,
 	alloc::{String, Vec, string::ToString},
 	helpers::uri::QueryParameters,
-	imports::{html::Document, net::Request},
+	imports::{
+		defaults::{DefaultValue, defaults_get, defaults_set},
+		html::Document,
+		net::Request,
+	},
 	prelude::*,
 };
 
@@ -60,6 +64,32 @@ fn home_row(title: &str, id: &str, entries: Vec<Manga>, big: bool) -> HomeCompon
 			listing: Some(listing(id, title)),
 		},
 		..Default::default()
+	}
+}
+
+/// Where the cookies the web view login produced are kept.
+///
+/// Anonymous browsing sets no cookies at all here, so this is the only
+/// jar the source has to maintain. Attaching it by hand rather than
+/// leaving it to the app is what makes a sign-in actually reach the
+/// site: the cookies arrive as an argument to the login handler and are
+/// otherwise thrown away.
+const LOGIN_COOKIE_KEY: &str = "login.cookies";
+
+fn stored_login() -> Option<String> {
+	defaults_get::<String>(LOGIN_COOKIE_KEY).filter(|value| !value.is_empty())
+}
+
+/// Attaches the stored login, when there is one.
+///
+/// The age gate's own cookie is not tracked here and may be displaced by
+/// this header. That is harmless: the reader already re-posts the gate
+/// whenever a strip comes back without its image, so losing the cookie
+/// costs one extra request on a rated comic rather than failing it.
+fn with_cookies(request: Request) -> Request {
+	match stored_login() {
+		Some(cookies) => request.header("Cookie", cookies.as_str()),
+		None => request,
 	}
 }
 
@@ -154,7 +184,7 @@ struct AComics;
 
 impl AComics {
 	fn fetch_cards(&self, url: String) -> Result<MangaPageResult> {
-		let html = Request::get(url)?.html()?;
+		let html = with_cookies(Request::get(url)?).html()?;
 		let entries = parse_cards(&html);
 
 		Ok(MangaPageResult {
@@ -255,7 +285,7 @@ impl Source for AComics {
 		needs_details: bool,
 		needs_chapters: bool,
 	) -> Result<Manga> {
-		let html = Request::get(format!("{BASE_URL}/~{}/about", manga.key))?.html()?;
+		let html = with_cookies(Request::get(format!("{BASE_URL}/~{}/about", manga.key))?).html()?;
 
 		if needs_details {
 			manga.url = Some(format!("{BASE_URL}/~{}", manga.key));
@@ -325,14 +355,14 @@ impl Source for AComics {
 	fn get_page_list(&self, manga: Manga, chapter: Chapter) -> Result<Vec<Page>> {
 		let url = format!("{BASE_URL}/~{}/{}", manga.key, chapter.key);
 
-		let src = match strip_image(&Request::get(&url)?.html()?) {
+		let src = match strip_image(&with_cookies(Request::get(&url)?).html()?) {
 			Some(src) => src,
 			None => {
 				// Comics rated R or NC-17 serve an age gate in place of the
 				// strip. Confirming it posts the same form the gate displays,
 				// which returns the strip directly and sets a cookie so later
 				// requests skip the gate.
-				let confirmed = Request::post(&url)?
+				let confirmed = with_cookies(Request::post(&url)?)
 					.header("Content-Type", "application/x-www-form-urlencoded")
 					.body("ageRestrict=17")
 					.html()?;
@@ -415,14 +445,41 @@ impl DeepLinkHandler for AComics {
 }
 
 impl WebLoginHandler for AComics {
-	fn handle_web_login(&self, _key: String, _cookies: HashMap<String, String>) -> Result<bool> {
+	fn handle_web_login(&self, _key: String, cookies: HashMap<String, String>) -> Result<bool> {
+		// These are what the web view came back with, and keeping them is the
+		// whole point: dropped, the source goes on asking for every page as a
+		// guest no matter how the sign-in went.
+		if !cookies.is_empty() {
+			let mut header = String::new();
+			for (name, value) in cookies.iter() {
+				if !header.is_empty() {
+					header.push_str("; ");
+				}
+				header.push_str(name);
+				header.push('=');
+				header.push_str(value);
+			}
+			defaults_set(LOGIN_COOKIE_KEY, DefaultValue::String(header));
+		}
+
 		// The session cookie's name isn't documented, so rather than guessing
 		// at one, ask the site: the header carries the login form only while
-		// signed out.
-		let html = Request::get(format!("{BASE_URL}/comics"))?.html()?;
-		Ok(html
+		// signed out. This goes out with the cookies just stored, so it
+		// reports what the source will get from here on rather than what the
+		// web view alone can see.
+		let html = with_cookies(Request::get(format!("{BASE_URL}/comics"))?).html()?;
+		let logged_in = html
 			.select_first("form[action=\"/action/guest/login\"]")
-			.is_none())
+			.is_none();
+
+		// Either the sign-in did not take or this call is a logout; the two
+		// cannot be told apart here, and in both cases the stored cookies are
+		// not worth sending again.
+		if !logged_in {
+			defaults_set(LOGIN_COOKIE_KEY, DefaultValue::String(String::new()));
+		}
+
+		Ok(logged_in)
 	}
 }
 
