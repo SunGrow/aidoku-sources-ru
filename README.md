@@ -256,6 +256,23 @@ endpoints actually return:
   plain HTTP — but it only yields chapter ids and titles, with no catalog,
   detail or page images, so it is not enough to build on.
 
+  Each volume of a run is its own title, with near-identical names and
+  nothing in the entry to say which volume follows which. The site keeps
+  that in a «Связанное» panel on comics pages — manga pages have no such
+  section — beside a «С этим читают» panel, which is a recommendation
+  strip rather than part of the run, so only the open panel is read.
+  Aidoku's `Manga` has no field for related titles, so they are appended
+  to the description. That is the only place they can be shown at all.
+
+  For the same reason the year and the publisher are put at the front of
+  the tag list: they are what distinguishes a 1963 run from a 2018 one
+  when both are called «Amazing Spider-Man».
+
+  Those rows sit in a `<ul class="page__list">`. The source looked for
+  them under `div.page__list`, which matches nothing and read as a page
+  with no rows rather than as an error, so every title went without an
+  author, an artist or a status until this was corrected.
+
   The challenge also re-triggers after bursts of requests, which is why the
   source caps parallel requests at two.
 

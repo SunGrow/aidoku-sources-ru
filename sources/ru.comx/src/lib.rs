@@ -478,8 +478,12 @@ fn is_cyrillic(c: char) -> bool {
 }
 
 /// Reads one of the `<li>Год: 2026</li>` rows from a detail page.
+///
+/// The list is a `<ul class="page__list">`, so the obvious `div.page__list`
+/// matches nothing at all. It silently read as a page that simply had no
+/// rows, which left every title without an author, an artist or a status.
 fn labelled_value(html: &Document, label: &str) -> Option<String> {
-	let rows = html.select("div.page__list li")?;
+	let rows = html.select(".page__list li")?;
 	for row in rows {
 		let text = row.text()?;
 		let trimmed = text.trim();
@@ -491,6 +495,40 @@ fn labelled_value(html: &Document, label: &str) -> Option<String> {
 		}
 	}
 	None
+}
+
+/// The titles the site lists under «Связанное» on a comic's page, which in
+/// practice are the other volumes of the same run.
+///
+/// Aidoku's `Manga` has no field for related titles, so there is nowhere to
+/// put these but the description. Without them a long run is a row of
+/// near-identically named entries with nothing to say which volume follows
+/// which. The panel is comics-only; manga pages carry no such section.
+fn related_titles(html: &Document) -> Vec<String> {
+	// The second panel, «С этим читают», is a recommendation strip rather
+	// than part of the run, so only the open one is read.
+	let Some(posters) = html.select("div.page__related-panel.is-active a.poster") else {
+		return Vec::new();
+	};
+
+	let mut titles: Vec<String> = Vec::new();
+	for poster in posters {
+		// The card's own text begins with its rating, so the title element is
+		// read directly, with the cover's alt text as a fallback.
+		let Some(raw) = poster
+			.select_first("p.poster__title")
+			.and_then(|title| title.text())
+			.or_else(|| poster.select_first("img").and_then(|img| img.attr("alt")))
+		else {
+			continue;
+		};
+
+		let title = primary_title(raw.trim());
+		if !title.is_empty() && !titles.contains(&title) {
+			titles.push(title);
+		}
+	}
+	titles
 }
 
 /// Parses the cards shared by the catalog and the search results.
@@ -691,6 +729,25 @@ impl Source for ComX {
 				.select_first("div.page__text.full-text.clearfix")
 				.and_then(|text| text.text());
 
+			// Each volume of a run is its own title here, and the entry itself
+			// says nothing about the ones around it. Appending them is the only
+			// way to show them at all, since there is no field for them.
+			let related = related_titles(&html);
+			if !related.is_empty() {
+				let mut note = String::from("Связанное: ");
+				for (index, title) in related.iter().enumerate() {
+					if index > 0 {
+						note.push_str(" · ");
+					}
+					note.push_str(title);
+				}
+
+				manga.description = Some(match manga.description.take() {
+					Some(text) if !text.trim().is_empty() => format!("{text}\n\n{note}"),
+					_ => note,
+				});
+			}
+
 			if let Some(author) = labelled_value(&html, "Автор:") {
 				manga.authors = Some(Vec::from([author]));
 			}
@@ -712,11 +769,21 @@ impl Source for ComX {
 				manga.update_strategy = UpdateStrategy::Never;
 			}
 
+			// The year and the publisher come first. A long run is filed as one
+			// title per volume under near-identical names, and these are what
+			// tell a 1963 run from a 2018 one at a glance.
+			let mut tags: Vec<String> = Vec::new();
+			if let Some(year) = labelled_value(&html, "Год:") {
+				tags.push(year);
+			}
+			if let Some(publisher) = labelled_value(&html, "Издатель:") {
+				tags.push(publisher);
+			}
+
 			// Genres are the catalog links carrying a `g=` segment. The same
 			// genre is linked more than once on the page, so repeats are
 			// dropped while the original order is kept.
 			if let Some(links) = html.select("a[href*=\"/ComicList/\"]") {
-				let mut tags: Vec<String> = Vec::new();
 				for link in links {
 					let Some(href) = link.attr("href") else {
 						continue;
@@ -732,9 +799,10 @@ impl Source for ComX {
 						tags.push(name);
 					}
 				}
-				if !tags.is_empty() {
-					manga.tags = Some(tags);
-				}
+			}
+
+			if !tags.is_empty() {
+				manga.tags = Some(tags);
 			}
 
 			// Covers carry an age badge such as `13+` or `18+`.
