@@ -1,10 +1,14 @@
 #![no_std]
 //! Aidoku source for com-x.life.
 //!
-//! The site runs DataLife Engine behind a Vue front end, but every page is
-//! server rendered: catalog cards are plain HTML, and the chapter and page
-//! lists are embedded in the markup as a `window.__DATA__` JSON object.
-//! Nothing here needs scripts to run, so the served HTML is all that is read.
+//! The site runs DataLife Engine behind a Vue front end, but the pages
+//! themselves are server rendered: catalog cards are plain HTML, and the
+//! chapter and page lists are embedded in the markup as a `window.__DATA__`
+//! JSON object. Parsing therefore only ever looks at served markup.
+//!
+//! Reaching that markup is the hard part. Every page sits behind a
+//! JavaScript challenge, so the fetching here runs it in a web view and
+//! reuses the cookies it wins — see `fetch`.
 
 use aidoku::{
 	Chapter, ContentRating, DeepLinkHandler, DeepLinkResult, FilterValue, HashMap, Listing,
@@ -13,7 +17,9 @@ use aidoku::{
 	alloc::{String, Vec, string::ToString},
 	helpers::uri::encode_uri_component,
 	imports::{
+		defaults::{DefaultValue, defaults_get, defaults_set},
 		html::{Document, Html},
+		js::{Cookie, WebView},
 		net::Request,
 		std::parse_date,
 	},
@@ -72,22 +78,103 @@ const LIST_MARKER: &str = "readed__title";
 /// Marker present on every detail and reader page.
 const DATA_MARKER: &str = "window.__DATA__";
 
-/// Fetches a page, working around the site's ad gate.
+/// Defaults key holding the cookies the challenge hands out once it has been
+/// solved, so later requests can skip the web view.
+const COOKIE_KEY: &str = "gate.cookies";
+
+/// How long the web view is given to work through the challenge.
+const CHALLENGE_TIMEOUT_MS: i32 = 20000;
+
+fn stored_cookies() -> Option<String> {
+	defaults_get::<String>(COOKIE_KEY).filter(|value| !value.is_empty())
+}
+
+/// Fetches a page.
 ///
-/// Some requests are answered with a `/_c?t=…` interstitial that carries no
-/// content and exists only to set a cookie. Asking again with that cookie in
-/// hand returns the real page, so a single retry covers it.
+/// Every page is behind a JavaScript challenge: a plain client is answered
+/// with a 302 to a `/_c?t=…` interstitial whose script has to run before the
+/// real page is served. Repeating the request does not help, because each
+/// attempt is issued a fresh challenge, and neither does replaying the cookie
+/// the redirect sets. The only way through is to run the script, so the page
+/// is loaded in a web view.
 ///
-/// The interstitial is recognised by the caller's marker being absent rather
-/// than by inspecting the redirected URL, which would require a newer host
-/// API than anything else here needs. The cost is one wasted request when a
-/// page is legitimately empty, which only a search with no hits reaches.
+/// Solving it yields cookies a plain request can reuse, and those are kept,
+/// so the web view is only needed again once they stop being accepted. A
+/// direct request is tried first for that reason — it is far cheaper, and
+/// once the cookies are warm it is what serves almost every page.
 fn fetch(url: &str, marker: &str) -> Result<String> {
-	let body = Request::get(url)?.string()?;
-	if body.contains(marker) {
-		return Ok(body);
+	let mut request = Request::get(url)?;
+	if let Some(cookies) = stored_cookies() {
+		request = request.header("Cookie", cookies.as_str());
 	}
-	Ok(Request::get(url)?.string()?)
+
+	if let Ok(body) = request.string() {
+		if body.contains(marker) {
+			return Ok(body);
+		}
+	}
+
+	solve_challenge(url, marker)
+}
+
+/// Loads a page in a web view so the challenge script runs, then keeps the
+/// cookies it produced.
+fn solve_challenge(url: &str, marker: &str) -> Result<String> {
+	let webview = WebView::new();
+	webview
+		.load_blocking(Request::get(url)?)
+		.map_err(|_| error!("Could not open the page"))?;
+
+	// The interstitial is what finishes loading first; it only navigates on
+	// to the real page once its script has run. So rather than reading the
+	// document straight away, poll it until the marker shows up.
+	let script = format!(
+		"new Promise(function(resolve){{\
+		var deadline=Date.now()+{};\
+		(function poll(){{\
+		var root=document.documentElement;\
+		var html=root?root.outerHTML:'';\
+		if(html.indexOf({:?})!==-1||Date.now()>deadline){{resolve(html);}}\
+		else{{setTimeout(poll,250);}}\
+		}})();}})",
+		CHALLENGE_TIMEOUT_MS,
+		marker
+	);
+
+	let html = webview
+		.eval_async(&script)
+		.map_err(|_| error!("Could not read the page"))?;
+
+	if !html.contains(marker) {
+		bail!("The site's challenge did not complete");
+	}
+
+	if let Ok(cookies) = webview.get_cookies() {
+		let header = cookie_header(&cookies);
+		if !header.is_empty() {
+			defaults_set(COOKIE_KEY, DefaultValue::String(header));
+		}
+	}
+
+	Ok(html)
+}
+
+/// Builds a `Cookie` header out of the web view's store, keeping only this
+/// site's cookies so nothing else leaks into the request.
+fn cookie_header(cookies: &[Cookie]) -> String {
+	let mut header = String::new();
+	for cookie in cookies {
+		if !cookie.domain.contains("com-x.life") {
+			continue;
+		}
+		if !header.is_empty() {
+			header.push_str("; ");
+		}
+		header.push_str(&cookie.name);
+		header.push('=');
+		header.push_str(&cookie.value);
+	}
+	header
 }
 
 fn fetch_document(url: &str) -> Result<Document> {

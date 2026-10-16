@@ -12,7 +12,8 @@ from the Browse tab:
 https://sungrow.github.io/aidoku-sources-ru/index.min.json
 ```
 
-Aidoku 0.7.1 or newer is required.
+Aidoku 0.7.1 or newer is required, except Com-X, which needs 0.9.0 — it
+relies on the web view API to get past the site's JavaScript challenge.
 
 ## Sources
 
@@ -20,7 +21,7 @@ Aidoku 0.7.1 or newer is required.
 |---|---|---|---|
 | WaManga | [wamanga.ru](https://wamanga.ru) | username + password | JSON API. Search, filters (type, status, genre, year), listings, deep links. |
 | AComics | [acomics.ru](https://acomics.ru) | web sign-in | Webcomics. Each strip is a single-page chapter. Search, genre/rating filters, listings, deep links. |
-| Com-X | [com-x.life](https://com-x.life) | web sign-in | Comics, manga, manhwa and manhua. Search, filters (section, genre, type, status, year, author, artist), listings, deep links. |
+| Com-X | [com-x.life](https://com-x.life) | web sign-in | Comics, manga, manhwa and manhua. Search, filters (section, genre, type, status, year, author, artist), listings, deep links. Needs Aidoku 0.9.0. |
 
 ### Accounts
 
@@ -121,10 +122,11 @@ endpoints actually return:
   `/app/uploads/...` and resolve against the site root with the `/app` prefix
   intact.
 - **Com-X** (`com-x.life` — note the hyphen; `comi-x.life` and `comx.life`
-  do not resolve) is DataLife Engine behind a Vue front end, but every page
-  is server rendered, so the source reads the served HTML only. Chapter and
+  do not resolve) is DataLife Engine behind a Vue front end. The pages are
+  server rendered, so parsing only ever looks at served markup: chapter and
   page lists come from the `window.__DATA__` object each page embeds, and
-  chapter images are served from `img.com-x.life/comix/`.
+  chapter images are served from `img.com-x.life/comix/`. Reaching that
+  markup is the hard part — see the challenge note below.
 
   Catalog filters are path segments, `/ComicList/g=17/page/2/`. A key takes
   several values as a comma separated list and the site returns the titles
@@ -138,7 +140,24 @@ endpoints actually return:
   redirects away from the catalog, so there is nothing a stateless source
   can use. The listings select sections instead.
 
-  Some requests are answered by an ad gate (`/_c?t=...`) that returns an
-  empty interstitial and sets a cookie; repeating the request returns the
-  real page, so the source retries once. The gate also rate-limits bursts,
-  which is why the source caps parallel requests at two.
+  Every page is behind a JavaScript challenge. A plain HTTP client asking
+  for the catalog, a title or the reader is answered with a 302 to a
+  `/_c?t=...` interstitial, which sets a cookie and serves a script that
+  has to run before the real page appears. Retrying does not help: each
+  attempt is issued a fresh challenge. Neither does replaying the cookie
+  from the redirect, nor changing the user agent. The challenge is not
+  IP-based — a browser on the same address passes it while curl does not.
+
+  So the source loads pages in Aidoku's web view, which can run the script,
+  and keeps the cookies that come out of it. Later requests go out as plain
+  HTTP with those cookies attached and only fall back to the web view when
+  they stop being accepted. This is what forces the 0.9.0 minimum, since
+  `eval_async` and `get_cookies` are 0.9.0 APIs.
+
+  One endpoint escapes the challenge — `/engine/ajax/controller.php` with
+  `mod=reader&method=reader/chapters&news_id=<id>` returns chapter JSON over
+  plain HTTP — but it only yields chapter ids and titles, with no catalog,
+  detail or page images, so it is not enough to build on.
+
+  The challenge also re-triggers after bursts of requests, which is why the
+  source caps parallel requests at two.
