@@ -1,0 +1,31 @@
+{
+	"info": {
+		"id": "ru.acomics",
+		"name": "AComics",
+		"altNames": ["Авторский Комикс", "АКомикс"],
+		"version": 1,
+		"url": "https://acomics.ru",
+		"contentRating": 1,
+		"languages": ["ru"],
+		"minAppVersion": "0.7.1"
+	},
+	"listings": [
+		{
+			"id": "popular",
+			"name": "Популярное"
+		},
+		{
+			"id": "latest",
+			"name": "Обновления"
+		},
+		{
+			"id": "longest",
+			"name": "Больше всего выпусков"
+		}
+	],
+	"config": {
+		"supportsTagSearch": true,
+		"hidesFiltersWhileSearching": true,
+		"maximumParallelRequests": 4
+	}
+}

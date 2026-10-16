@@ -19,6 +19,7 @@ Aidoku 0.7.1 or newer is required.
 | Source | Site | Notes |
 |---|---|---|
 | WaManga | [wamanga.ru](https://wamanga.ru) | JSON API. Search, filters (type, status, genre, year), listings, deep links. |
+| AComics | [acomics.ru](https://acomics.ru) | Webcomics. Each strip is a single-page chapter. Search, genre/rating filters, listings, deep links. |
 
 ## Building
 
