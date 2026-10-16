@@ -3,7 +3,7 @@
 		"id": "ru.comx",
 		"name": "Com-X",
 		"altNames": ["ComX", "Ком-Икс", "com-x.life"],
-		"version": 4,
+		"version": 5,
 		"url": "https://com-x.life",
 		"contentRating": 1,
 		"languages": ["ru"],
@@ -13,6 +13,18 @@
 		{
 			"id": "latest",
 			"name": "Обновления"
+		},
+		{
+			"id": "comics",
+			"name": "Комиксы"
+		},
+		{
+			"id": "marvel",
+			"name": "Marvel"
+		},
+		{
+			"id": "dc",
+			"name": "DC"
 		},
 		{
 			"id": "manga",

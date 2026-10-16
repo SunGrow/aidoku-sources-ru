@@ -2,12 +2,17 @@
 	"info": {
 		"id": "ru.acomics",
 		"name": "AComics",
-		"altNames": ["Авторский Комикс", "АКомикс"],
-		"version": 2,
+		"altNames": [
+			"Авторский Комикс",
+			"АКомикс"
+		],
+		"version": 3,
 		"url": "https://acomics.ru",
 		"contentRating": 1,
-		"languages": ["ru"],
-		"minAppVersion": "0.7.1"
+		"languages": [
+			"ru"
+		],
+		"minAppVersion": "0.9.0"
 	},
 	"listings": [
 		{

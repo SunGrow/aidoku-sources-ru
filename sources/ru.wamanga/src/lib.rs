@@ -6,8 +6,9 @@
 
 use aidoku::{
 	AidokuError, BasicLoginHandler, Chapter, ContentRating, DeepLinkHandler, DeepLinkResult,
-	FilterValue, Listing, ListingProvider, Manga, MangaPageResult, MangaStatus, Page, PageContent,
-	Result, Source, UpdateStrategy, Viewer,
+	FilterValue, Home, HomeComponent, HomeComponentValue, HomeLayout, Link, LinkValue, Listing,
+	ListingKind, ListingProvider, Manga, MangaPageResult, MangaStatus, Page, PageContent, Result,
+	Source, UpdateStrategy, Viewer,
 	alloc::{String, Vec, string::ToString},
 	helpers::uri::QueryParameters,
 	imports::{
@@ -23,6 +24,52 @@ use serde::{Deserialize, Serialize};
 const BASE_URL: &str = "https://wamanga.ru";
 const API_URL: &str = "https://wamanga.ru/api/v1";
 const PAGE_LIMIT: i32 = 30;
+
+/// How many of the top titles get the large treatment on the home page.
+const FEATURED_COUNT: usize = 5;
+
+fn listing(id: &str, name: &str) -> Listing {
+	Listing {
+		id: String::from(id),
+		name: String::from(name),
+		kind: ListingKind::Default,
+	}
+}
+
+fn manga_links(entries: Vec<Manga>) -> Vec<Link> {
+	entries
+		.into_iter()
+		.map(|manga| Link {
+			title: manga.title.clone(),
+			image_url: manga.cover.clone(),
+			value: Some(LinkValue::Manga(manga)),
+			..Default::default()
+		})
+		.collect()
+}
+
+/// Turns one listing's first page into a home row: the first gets the
+/// large carousel, the rest a plain scroller that opens the listing.
+fn home_row(title: &str, id: &str, entries: Vec<Manga>, big: bool) -> HomeComponent {
+	if big {
+		return HomeComponent {
+			value: HomeComponentValue::BigScroller {
+				entries: entries.into_iter().take(FEATURED_COUNT).collect(),
+				auto_scroll_interval: Some(8.0),
+			},
+			..Default::default()
+		};
+	}
+
+	HomeComponent {
+		title: Some(String::from(title)),
+		value: HomeComponentValue::Scroller {
+			entries: manga_links(entries),
+			listing: Some(listing(id, title)),
+		},
+		..Default::default()
+	}
+}
 
 /// Defaults keys holding the JWT pair issued by `/auth/login`.
 const ACCESS_TOKEN_KEY: &str = "login.accessToken";
@@ -385,6 +432,36 @@ impl ListingProvider for WaManga {
 	}
 }
 
+impl Home for WaManga {
+	fn get_home(&self) -> Result<HomeLayout> {
+		let mut components = Vec::new();
+
+		// The API answers quickly and is not rate limited in any way the
+		// source has run into, so the page is built from the same three
+		// listings the source already offers. A row that fails is left
+		// out rather than taking the whole page down with it.
+		for (title, id, sort_key, big) in [
+			("Популярное", "popular", "views", true),
+			("Обновления", "latest", "updatedAt", false),
+			("Новинки", "new", "createdAt", false),
+		] {
+			let mut params = Self::base_query(1);
+			params.push("sortKey", Some(sort_key));
+			params.push("sortDescending", Some("true"));
+
+			let Ok(result) = self.fetch_list(params) else {
+				continue;
+			};
+			if result.entries.is_empty() {
+				continue;
+			}
+			components.push(home_row(title, id, result.entries, big));
+		}
+
+		Ok(HomeLayout { components })
+	}
+}
+
 impl DeepLinkHandler for WaManga {
 	fn handle_deep_link(&self, url: String) -> Result<Option<DeepLinkResult>> {
 		let Some(path) = url.strip_prefix(BASE_URL) else {
@@ -449,5 +526,6 @@ register_source!(
 	WaManga,
 	ListingProvider,
 	DeepLinkHandler,
-	BasicLoginHandler
+	BasicLoginHandler,
+	Home
 );

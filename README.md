@@ -15,13 +15,26 @@ https://sungrow.github.io/aidoku-sources-ru/index.min.json
 Aidoku 0.7.1 or newer is required, except Com-X, which needs 0.9.0 — it
 relies on the web view API to get past the site's JavaScript challenge.
 
+All three need Aidoku 0.9.0 or newer.
+
 ## Sources
 
 | Source | Site | Login | Notes |
 |---|---|---|---|
-| WaManga | [wamanga.ru](https://wamanga.ru) | username + password | JSON API. Search, filters (type, status, genre, year), listings, deep links. |
-| AComics | [acomics.ru](https://acomics.ru) | web sign-in | Webcomics. Each strip is a single-page chapter. Search, genre/rating filters, listings, deep links. |
-| Com-X | [com-x.life](https://com-x.life) | web sign-in | Comics, manga, manhwa and manhua. Search, filters (section, genre, type, status, year, author, artist), listings, deep links. Needs Aidoku 0.9.0. |
+| WaManga | [wamanga.ru](https://wamanga.ru) | username + password | JSON API. Search, filters (type, status, genre, year), listings, home page, deep links. |
+| AComics | [acomics.ru](https://acomics.ru) | web sign-in | Webcomics. Each strip is a single-page chapter. Search, genre/rating filters, listings, home page, deep links. |
+| Com-X | [com-x.life](https://com-x.life) | web sign-in | Comics, manga, manhwa and manhua. Search, sorting, filters (section, genre, type, status, year, author, artist), listings, home page, deep links. |
+
+### Browsing
+
+Each source opens on a home page in Aidoku's own layout: a large carousel
+of the newest or most popular titles, then rows that each open the full
+listing behind them. Com-X adds a row of genre chips, which drop straight
+into the filtered catalog.
+
+Com-X carries far more comics than manga, so its listings cover both:
+**Комиксы** unions every western publisher section, with **Marvel** and
+**DC** split out, alongside **Манга**, **Манхва** and **Маньхуа**.
 
 ### Accounts
 
@@ -39,6 +52,13 @@ recommendations). Sign in from the source's settings page in Aidoku.
   so the setting opens the homepage — use the **Войти** button in the header.
   Being signed in is detected from the page itself rather than by guessing a
   cookie name.
+
+  Com-X keeps the cookies the web view hands back and merges them with the
+  challenge grant on every request, the login's winning where both carry a
+  cookie of the same name. The two are stored apart so that re-solving the
+  challenge cannot sign the reader back out. Earlier versions dropped the
+  login cookies entirely and sent only the grant, which made a sign-in that
+  plainly succeeded in the web view look as though it had never happened.
 
 ### Sites not implemented yet
 
@@ -63,6 +83,24 @@ selectors, and that guess is usually wrong: WaManga and AComics both needed
 endpoints and selectors that differ from the public reference parsers, which
 had gone stale. Com-X was the opposite — its reference selectors still
 matched — but that only became checkable once the site could be loaded.
+
+## iCloud sync
+
+Nothing in a source switches this on or off. Aidoku mirrors its own Core
+Data store with `NSPersistentCloudKitContainer`, gated by a single app
+setting, and the source API has no sync trait or manifest field at all.
+
+What a source does decide is whether the synced rows still resolve on the
+other device. The library, chapter and history records are keyed on the
+source id together with the manga and chapter keys, so those keys have to
+mean the same thing everywhere and not drift between versions. All three
+sources here derive them from the site's own identifiers — WaManga from the
+API's ids, AComics from the permanent `~slug`, Com-X from the numeric id
+the URL carries — with no device, session or host state mixed in.
+
+Com-X titles get renamed, which changes the slug in their URL, but the key
+survives it: the site resolves a title by the numeric prefix and redirects
+to the current address, so a stale key still opens the right entry.
 
 ## Building
 
@@ -135,10 +173,24 @@ endpoints actually return:
   without an error. The year filter is an exact year rather than a range —
   its comma form keeps only the first value too.
 
-  Sorting is not exposed. The site changes it with a form post that stores
-  the choice in the session instead of putting it in the URL, and that post
-  redirects away from the catalog, so there is nothing a stateless source
-  can use. The listings select sections instead.
+  Sorting is a form post rather than part of the URL, and the response to
+  that post is itself the sorted page — it does not redirect. So a catalog
+  request is a `POST` carrying `dlenewssortby` and `dledirection`, which
+  the **Сортировка** filter sets. The two `set_*` fields name the slot the
+  site stores the choice in; it ignores which slot is named when deciding
+  what to return, but the form it ships always sends them.
+
+  Stating the sort on every request is not optional. The site remembers the
+  last one it was given, so a plain `GET` comes back in whatever order was
+  asked for previously rather than in a known one.
+
+  The bare `/ComicList/` is not the full catalog: it is a trimmed landing
+  page of ten entries whose own pagination points elsewhere, so
+  `/ComicList/page/2/` serves the first page again and scrolling never
+  advances. The whole catalog is requested by naming every section instead,
+  `p.cat=50,11,12,...`, which pages properly at twenty per request. Unlike
+  the genre filter, `p.cat` unions its values rather than intersecting
+  them, which is also what makes the combined Комиксы listing possible.
 
   Every page is behind a JavaScript challenge. A plain HTTP client asking
   for the catalog, a title or the reader is answered with a 302 to a

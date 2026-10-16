@@ -5,7 +5,8 @@
 //! exposed as a single-page chapter rather than trying to group them.
 
 use aidoku::{
-	Chapter, ContentRating, DeepLinkHandler, DeepLinkResult, FilterValue, HashMap, Listing,
+	Chapter, ContentRating, DeepLinkHandler, DeepLinkResult, FilterValue, HashMap, Home,
+	HomeComponent, HomeComponentValue, HomeLayout, Link, LinkValue, Listing, ListingKind,
 	ListingProvider, Manga, MangaPageResult, Page, PageContent, Result, Source, UpdateStrategy,
 	Viewer, WebLoginHandler,
 	alloc::{String, Vec, string::ToString},
@@ -15,6 +16,52 @@ use aidoku::{
 };
 
 const BASE_URL: &str = "https://acomics.ru";
+
+/// How many of the top titles get the large treatment on the home page.
+const FEATURED_COUNT: usize = 5;
+
+fn listing(id: &str, name: &str) -> Listing {
+	Listing {
+		id: String::from(id),
+		name: String::from(name),
+		kind: ListingKind::Default,
+	}
+}
+
+fn manga_links(entries: Vec<Manga>) -> Vec<Link> {
+	entries
+		.into_iter()
+		.map(|manga| Link {
+			title: manga.title.clone(),
+			image_url: manga.cover.clone(),
+			value: Some(LinkValue::Manga(manga)),
+			..Default::default()
+		})
+		.collect()
+}
+
+/// Turns one listing's first page into a home row: the first gets the
+/// large carousel, the rest a plain scroller that opens the listing.
+fn home_row(title: &str, id: &str, entries: Vec<Manga>, big: bool) -> HomeComponent {
+	if big {
+		return HomeComponent {
+			value: HomeComponentValue::BigScroller {
+				entries: entries.into_iter().take(FEATURED_COUNT).collect(),
+				auto_scroll_interval: Some(8.0),
+			},
+			..Default::default()
+		};
+	}
+
+	HomeComponent {
+		title: Some(String::from(title)),
+		value: HomeComponentValue::Scroller {
+			entries: manga_links(entries),
+			listing: Some(listing(id, title)),
+		},
+		..Default::default()
+	}
+}
 
 /// The catalog returns ten cards per request and is paged with `skip`.
 const PAGE_SIZE: i32 = 10;
@@ -315,6 +362,31 @@ impl ListingProvider for AComics {
 	}
 }
 
+impl Home for AComics {
+	fn get_home(&self) -> Result<HomeLayout> {
+		let mut components = Vec::new();
+
+		// Three plain catalog requests, none of them gated, so the page
+		// is built from the listings the source already offers. A row
+		// that fails is left out rather than failing the whole page.
+		for (title, id, sort, big) in [
+			("Популярное", "popular", "subscr_count", true),
+			("Обновления", "latest", "last_update", false),
+			("Самые длинные", "longest", "issue_count", false),
+		] {
+			let Ok(result) = self.fetch_cards(Self::catalog_url(1, sort, &[])) else {
+				continue;
+			};
+			if result.entries.is_empty() {
+				continue;
+			}
+			components.push(home_row(title, id, result.entries, big));
+		}
+
+		Ok(HomeLayout { components })
+	}
+}
+
 impl DeepLinkHandler for AComics {
 	fn handle_deep_link(&self, url: String) -> Result<Option<DeepLinkResult>> {
 		let Some(path) = url.strip_prefix(BASE_URL) else {
@@ -354,4 +426,4 @@ impl WebLoginHandler for AComics {
 	}
 }
 
-register_source!(AComics, ListingProvider, DeepLinkHandler, WebLoginHandler);
+register_source!(AComics, ListingProvider, DeepLinkHandler, WebLoginHandler, Home);

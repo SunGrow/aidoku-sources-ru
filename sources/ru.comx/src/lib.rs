@@ -11,7 +11,8 @@
 //! reuses the cookies it wins — see `fetch`.
 
 use aidoku::{
-	Chapter, ContentRating, DeepLinkHandler, DeepLinkResult, FilterValue, HashMap, Listing,
+	Chapter, ContentRating, DeepLinkHandler, DeepLinkResult, FilterItem, FilterValue, HashMap,
+	Home, HomeComponent, HomeComponentValue, HomeLayout, Link, LinkValue, Listing, ListingKind,
 	ListingProvider, Manga, MangaPageResult, MangaStatus, Page, PageContent, Result, Source,
 	UpdateStrategy, WebLoginHandler,
 	alloc::{String, Vec, string::ToString},
@@ -38,6 +39,59 @@ const IMAGE_PREFIX: &str = "comix";
 
 /// Chapter dates, e.g. `15.10.2026`.
 const DATE_FORMAT: &str = "dd.MM.yyyy";
+
+/// Western publisher sections: everything the site files outside manga,
+/// manhwa and manhua, which is most of what it carries.
+///
+/// `p.cat` unions the values it is given, so these can be asked for in a
+/// single request. Note this is the opposite of the genre filter, which
+/// intersects them.
+const COMIC_SECTIONS: &[&str] = &[
+	"2", "14", "7", "6", "4", "8", "9", "10", "11", "12", "13", "15", "16", "18", "50", "51",
+];
+
+/// Every section the site files a title under.
+///
+/// Asking for all of them is how the full catalog is requested. The bare
+/// `/ComicList/` is not: it serves a trimmed landing page of ten entries
+/// whose own pagination links point somewhere else, so `/ComicList/page/2/`
+/// hands back the first page again and scrolling never advances.
+const ALL_SECTIONS: &[&str] = &[
+	"50", "11", "12", "7", "14", "10", "16", "6", "4", "2", "13", "9", "15", "8", "5", "51",
+	"3", "44", "45", "18",
+];
+
+/// The sort fields the site accepts, in the order the sort filter lists
+/// them. The index the filter reports is an index into this.
+const SORT_FIELDS: &[&str] = &[
+	"date",
+	"editdate",
+	"rating",
+	"news_read",
+	"comm_num",
+	"title",
+	"year",
+];
+
+/// How many of the newest titles get the large treatment on the home page.
+const FEATURED_COUNT: usize = 5;
+
+/// A popular slice of the genre list, shown as chips on the home page. All
+/// 194 of them belong in the filter sheet rather than in a row.
+const HOME_GENRES: &[(&str, &str)] = &[
+	("17", "боевик"),
+	("76", "романтика"),
+	("106", "фэнтези"),
+	("29", "драма"),
+	("42", "комедия"),
+	("67", "приключения"),
+	("105", "фантастика"),
+	("102", "ужасы"),
+	("25", "детектив"),
+	("111", "школа"),
+	("235", "исекай"),
+	("87", "супергероика"),
+];
 
 // MARK: - Embedded page data
 
@@ -82,6 +136,11 @@ const DATA_MARKER: &str = "window.__DATA__";
 /// solved, so later requests can skip the web view.
 const COOKIE_KEY: &str = "gate.cookies";
 
+/// Where the cookies the web view login produced are kept. Deliberately
+/// separate from the challenge grant, so that re-solving the challenge
+/// cannot quietly sign the user back out.
+const LOGIN_COOKIE_KEY: &str = "login.cookies";
+
 /// How many one second polls the web view is given to work through the
 /// challenge before giving up on it. The page load is no longer waited
 /// for separately, so this budget has to cover it as well.
@@ -92,6 +151,57 @@ const READ_DOCUMENT: &str = "document.documentElement.outerHTML";
 
 fn stored_cookies() -> Option<String> {
 	defaults_get::<String>(COOKIE_KEY).filter(|value| !value.is_empty())
+}
+
+fn stored_login() -> Option<String> {
+	defaults_get::<String>(LOGIN_COOKIE_KEY).filter(|value| !value.is_empty())
+}
+
+/// The cookie header a request goes out with.
+///
+/// The challenge grant and the login are merged here. Where both carry a
+/// cookie of the same name the login's wins: it is the newer of the two and
+/// the one holding the session.
+fn request_cookies() -> Option<String> {
+	let mut merged: Vec<(String, String)> = Vec::new();
+
+	for jar in [stored_cookies(), stored_login()] {
+		let Some(jar) = jar else {
+			continue;
+		};
+		for pair in jar.split("; ") {
+			let Some((name, value)) = pair.split_once('=') else {
+				continue;
+			};
+			match merged.iter_mut().find(|(seen, _)| seen == name) {
+				Some(slot) => slot.1 = String::from(value),
+				None => merged.push((String::from(name), String::from(value))),
+			}
+		}
+	}
+
+	if merged.is_empty() {
+		return None;
+	}
+
+	let mut header = String::new();
+	for (index, (name, value)) in merged.iter().enumerate() {
+		if index > 0 {
+			header.push_str("; ");
+		}
+		header.push_str(name);
+		header.push('=');
+		header.push_str(value);
+	}
+	Some(header)
+}
+
+/// Attaches whatever cookies are on hand to a request.
+fn with_cookies(request: Request) -> Request {
+	match request_cookies() {
+		Some(cookies) => request.header("Cookie", cookies.as_str()),
+		None => request,
+	}
 }
 
 /// Fetches a page.
@@ -108,12 +218,7 @@ fn stored_cookies() -> Option<String> {
 /// direct request is tried first for that reason — it is far cheaper, and
 /// once the cookies are warm it is what serves almost every page.
 fn fetch(url: &str, marker: &str) -> Result<String> {
-	let mut request = Request::get(url)?;
-	if let Some(cookies) = stored_cookies() {
-		request = request.header("Cookie", cookies.as_str());
-	}
-
-	if let Ok(body) = request.string() {
+	if let Ok(body) = with_cookies(Request::get(url)?).string() {
 		if body.contains(marker) {
 			return Ok(body);
 		}
@@ -207,6 +312,74 @@ fn cookie_header(cookies: &[Cookie]) -> String {
 
 fn fetch_document(url: &str) -> Result<Document> {
 	Ok(Html::parse(fetch(url, LIST_MARKER)?)?)
+}
+
+/// Builds the form the catalog is asked for.
+///
+/// Sorting is not expressible in the URL. The site takes it as a form post
+/// and then remembers the choice server side, which means a plain GET comes
+/// back in whatever order was last asked for rather than in a known one. So
+/// every catalog request states its sort, and this is what it states when
+/// the user has not picked one.
+fn sort_body(filters: &[FilterValue]) -> String {
+	let mut field = SORT_FIELDS[0];
+	let mut direction = "desc";
+
+	for filter in filters {
+		if let FilterValue::Sort {
+			id,
+			index,
+			ascending,
+		} = filter
+		{
+			if id != "sort" {
+				continue;
+			}
+			if let Some(name) = usize::try_from(*index).ok().and_then(|i| SORT_FIELDS.get(i)) {
+				field = name;
+			}
+			direction = if *ascending { "asc" } else { "desc" };
+		}
+	}
+
+	// The two `set_` fields name the slot the site stores the choice in. It
+	// ignores which slot is named when deciding what to return, but the form
+	// it ships always sends them, so they are sent here too.
+	format!(
+		"dlenewssortby={field}&dledirection={direction}\
+		&set_new_sort=dle_sort_xfilter&set_direction_sort=dle_direction_xfilter"
+	)
+}
+
+/// Fetches a catalog page, stating the order it wants it in.
+fn catalog_document(url: &str, body: &str) -> Result<Document> {
+	let sorted = |request: Request| {
+		with_cookies(request)
+			.header("Content-Type", "application/x-www-form-urlencoded")
+			.header("Referer", BASE_URL)
+			.body(body)
+			.string()
+			.ok()
+			.filter(|page| page.contains(LIST_MARKER))
+	};
+
+	// Only worth trying while there is something to send: without cookies
+	// this can only come back as the interstitial, and the challenge has to
+	// be solved before anything else can work anyway.
+	if request_cookies().is_some()
+		&& let Ok(request) = Request::post(url)
+		&& let Some(page) = sorted(request)
+	{
+		return Ok(Html::parse(page)?);
+	}
+
+	// Either there were no usable cookies yet or they have gone stale, so
+	// fall back to the ordinary fetch, which can re-solve the challenge.
+	// That is a GET and so arrives in an unknown order; asking once more
+	// with the fresh cookies is what puts the sort back.
+	let page = fetch(url, LIST_MARKER)?;
+	let resorted = Request::post(url).ok().and_then(sorted);
+	Ok(Html::parse(resorted.unwrap_or(page))?)
 }
 
 /// Finds the `window.__DATA__ = {…}` object literal a page embeds.
@@ -393,8 +566,7 @@ impl ComX {
 	/// `g=17/g=76` silently keeps only the last value and `g=17;76` only the
 	/// first, both without any error, so the comma is the only usable form.
 	fn catalog_url(page: i32, filters: &[FilterValue]) -> String {
-		let mut url = String::from(BASE_URL);
-		url.push_str("/ComicList");
+		let mut segments = String::new();
 
 		for filter in filters {
 			match filter {
@@ -406,23 +578,53 @@ impl ComX {
 						}
 						joined.push_str(value);
 					}
-					push_segment(&mut url, id, &joined);
+					push_segment(&mut segments, id, &joined);
 				}
 				FilterValue::Select { id, value } if !value.is_empty() => {
-					push_segment(&mut url, id, value);
+					push_segment(&mut segments, id, value);
 				}
 				FilterValue::Text { id, value } if !value.trim().is_empty() => {
-					push_segment(&mut url, id, &encode_uri_component(value.trim()));
+					push_segment(&mut segments, id, &encode_uri_component(value.trim()));
 				}
 				_ => {}
 			}
 		}
+
+		// Nothing to narrow it by means the whole catalog, which is asked for
+		// by naming every section rather than by leaving the URL bare.
+		if segments.is_empty() {
+			let mut all = String::new();
+			for (index, id) in ALL_SECTIONS.iter().enumerate() {
+				if index > 0 {
+					all.push(',');
+				}
+				all.push_str(id);
+			}
+			push_segment(&mut segments, "p.cat", &all);
+		}
+
+		let mut url = format!("{BASE_URL}/ComicList{segments}");
 
 		url.push('/');
 		if page > 1 {
 			url.push_str(&format!("page/{page}/"));
 		}
 		url
+	}
+
+	/// Fetches a page of the catalog.
+	fn fetch_catalog(&self, filters: &[FilterValue], page: i32) -> Result<MangaPageResult> {
+		let html = catalog_document(&Self::catalog_url(page, filters), &sort_body(filters))?;
+		Ok(MangaPageResult {
+			entries: parse_cards(&html),
+			has_next_page: has_next_page(&html, page),
+		})
+	}
+
+	/// Fetches the first page of a section, for the home page.
+	fn home_section(&self, filters: &[FilterValue]) -> Result<Vec<Manga>> {
+		let html = catalog_document(&Self::catalog_url(1, filters), &sort_body(filters))?;
+		Ok(parse_cards(&html))
 	}
 }
 
@@ -453,7 +655,7 @@ impl Source for ComX {
 			return self.fetch_cards(url, page);
 		}
 
-		self.fetch_cards(Self::catalog_url(page, &filters), page)
+		self.fetch_catalog(&filters, page)
 	}
 
 	fn get_manga_update(
@@ -615,21 +817,121 @@ impl ListingProvider for ComX {
 		// it through a form post that stores the choice in the session rather
 		// than through the URL, so the listings here select sections instead.
 		let filters: Vec<FilterValue> = match listing.id.as_str() {
-			"manga" => section("3"),
-			"manhwa" => section("44"),
-			"manhua" => section("45"),
+			"comics" => sections(COMIC_SECTIONS),
+			"marvel" => sections(&["2"]),
+			"dc" => sections(&["14"]),
+			"manga" => sections(&["3"]),
+			"manhwa" => sections(&["44"]),
+			"manhua" => sections(&["45"]),
 			_ => Vec::new(),
 		};
 
-		self.fetch_cards(Self::catalog_url(page, &filters), page)
+		self.fetch_catalog(&filters, page)
 	}
 }
 
-fn section(id: &str) -> Vec<FilterValue> {
-	Vec::from([FilterValue::Select {
+/// Builds the section filter a catalog URL is assembled from.
+fn sections(ids: &[&str]) -> Vec<FilterValue> {
+	Vec::from([FilterValue::MultiSelect {
 		id: String::from("p.cat"),
-		value: String::from(id),
+		included: ids.iter().map(|id| String::from(*id)).collect(),
+		excluded: Vec::new(),
 	}])
+}
+
+fn listing(id: &str, name: &str) -> Listing {
+	Listing {
+		id: String::from(id),
+		name: String::from(name),
+		kind: ListingKind::Default,
+	}
+}
+
+fn manga_links(entries: Vec<Manga>) -> Vec<Link> {
+	entries
+		.into_iter()
+		.map(|manga| Link {
+			title: manga.title.clone(),
+			image_url: manga.cover.clone(),
+			value: Some(LinkValue::Manga(manga)),
+			..Default::default()
+		})
+		.collect()
+}
+
+fn genre_chips() -> Vec<FilterItem> {
+	HOME_GENRES
+		.iter()
+		.map(|(id, name)| FilterItem {
+			title: String::from(*name),
+			values: Some(Vec::from([FilterValue::MultiSelect {
+				id: String::from("g"),
+				included: Vec::from([String::from(*id)]),
+				excluded: Vec::new(),
+			}])),
+		})
+		.collect()
+}
+
+impl Home for ComX {
+	fn get_home(&self) -> Result<HomeLayout> {
+		let latest = self.home_section(&[])?;
+		let mut components = Vec::new();
+
+		// The newest few are the hero, and the remainder of that same request
+		// fills the row beneath it, so the two together cost one fetch.
+		let featured: Vec<Manga> = latest.iter().take(FEATURED_COUNT).cloned().collect();
+		if !featured.is_empty() {
+			components.push(HomeComponent {
+				value: HomeComponentValue::BigScroller {
+					entries: featured,
+					auto_scroll_interval: Some(8.0),
+				},
+				..Default::default()
+			});
+		}
+
+		if latest.len() > FEATURED_COUNT {
+			components.push(HomeComponent {
+				title: Some(String::from("Обновления")),
+				value: HomeComponentValue::Scroller {
+					entries: manga_links(latest[FEATURED_COUNT..].to_vec()),
+					listing: Some(listing("latest", "Обновления")),
+				},
+				..Default::default()
+			});
+		}
+
+		// Chips cost nothing: they are links, not results.
+		components.push(HomeComponent {
+			title: Some(String::from("Жанры")),
+			value: HomeComponentValue::Filters(genre_chips()),
+			..Default::default()
+		});
+
+		// Each of these is another trip through the challenge, so the page
+		// stops at two, and a section that fails is left out rather than
+		// taking the whole home down with it.
+		for (title, id, ids) in [
+			("Комиксы", "comics", COMIC_SECTIONS),
+			("Манхва", "manhwa", &["44"] as &[&str]),
+		] {
+			let entries = self.home_section(&sections(ids)).unwrap_or_default();
+			if entries.is_empty() {
+				continue;
+			}
+			components.push(HomeComponent {
+				title: Some(String::from(title)),
+				value: HomeComponentValue::Scroller {
+					entries: manga_links(entries),
+					listing: Some(listing(id, title)),
+				},
+				..Default::default()
+			});
+		}
+
+		Ok(HomeLayout { components })
+	}
 }
 
 impl DeepLinkHandler for ComX {
@@ -678,13 +980,42 @@ fn embedded_string(html: &str, field: &str) -> Option<String> {
 }
 
 impl WebLoginHandler for ComX {
-	fn handle_web_login(&self, _key: String, _cookies: HashMap<String, String>) -> Result<bool> {
+	fn handle_web_login(&self, _key: String, cookies: HashMap<String, String>) -> Result<bool> {
+		// These cookies are the whole point of the exercise. Dropping them
+		// leaves the source requesting every page as a guest, which is what
+		// makes a login that plainly succeeded in the web view look as though
+		// it never happened.
+		if !cookies.is_empty() {
+			let mut header = String::new();
+			for (name, value) in cookies.iter() {
+				if !header.is_empty() {
+					header.push_str("; ");
+				}
+				header.push_str(name);
+				header.push('=');
+				header.push_str(value);
+			}
+			defaults_set(LOGIN_COOKIE_KEY, DefaultValue::String(header));
+		}
+
 		// The session cookie's name is not documented, so rather than guess at
 		// one, ask the site: every catalog page states the signed-in state in
-		// the filter payload it embeds.
+		// the filter payload it embeds. This runs through the ordinary fetch,
+		// so it is answered with the cookies just stored and reports what the
+		// source will actually get from here on rather than what the web view
+		// alone can see.
 		let body = fetch(&format!("{BASE_URL}/ComicList/"), LIST_MARKER)?;
-		Ok(body.contains("\"is_logged\":true"))
+		let logged_in = body.contains("\"is_logged\":true");
+
+		// Not logged in means either that the login did not take or that this
+		// call is a logout; which of the two it is cannot be told apart here,
+		// and in both cases the stored cookies are not worth sending again.
+		if !logged_in {
+			defaults_set(LOGIN_COOKIE_KEY, DefaultValue::String(String::new()));
+		}
+
+		Ok(logged_in)
 	}
 }
 
-register_source!(ComX, ListingProvider, DeepLinkHandler, WebLoginHandler);
+register_source!(ComX, ListingProvider, DeepLinkHandler, WebLoginHandler, Home);
