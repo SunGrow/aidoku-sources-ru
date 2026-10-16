@@ -83,8 +83,9 @@ const DATA_MARKER: &str = "window.__DATA__";
 const COOKIE_KEY: &str = "gate.cookies";
 
 /// How many one second polls the web view is given to work through the
-/// challenge before giving up on it.
-const CHALLENGE_ATTEMPTS: usize = 20;
+/// challenge before giving up on it. The page load is no longer waited
+/// for separately, so this budget has to cover it as well.
+const CHALLENGE_ATTEMPTS: usize = 30;
 
 /// Reads the document as it currently stands in the web view.
 const READ_DOCUMENT: &str = "document.documentElement.outerHTML";
@@ -125,13 +126,20 @@ fn fetch(url: &str, marker: &str) -> Result<String> {
 /// cookies it produced.
 fn solve_challenge(url: &str, marker: &str) -> Result<String> {
 	let webview = WebView::new();
+
+	// `load` rather than `load_blocking`. Waiting for the load to finish
+	// can never return, because the interstitial navigates away the moment
+	// its script runs and the wait is left pending on a navigation that no
+	// longer exists; on an iPad that hangs the listing forever, while the
+	// same build happens to get away with it on a phone. Nothing below
+	// blocks without a bound, so the poll does the waiting instead.
 	webview
-		.load_blocking(Request::get(url)?)
+		.load(Request::get(url)?)
 		.map_err(|_| error!("Could not open the page"))?;
 
-	// The interstitial is what finishes loading first; it only navigates on
-	// to the real page once its script has run. So rather than reading the
-	// document straight away, poll it until the marker shows up.
+	// The interstitial is what loads first; it only navigates on to the
+	// real page once its script has run. So the document is polled until
+	// the marker shows up, which also covers the page not existing yet.
 	//
 	// The polling is done out here with `sleep` and a plain `eval` rather
 	// than handed to `eval_async` as one promise, because the asynchronous

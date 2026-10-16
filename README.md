@@ -162,6 +162,13 @@ endpoints actually return:
   0.9. If the document cannot be read out of the web view, the source still
   retries the page over plain HTTP with the cookies the challenge issued.
 
+  The page is loaded with `load` and never `load_blocking`. Waiting for the
+  load to finish can never return, because the interstitial navigates away
+  as soon as its script runs and the wait is left pending. That hung the
+  listing indefinitely on an iPad while the same build worked on a phone,
+  so nothing in the fetch path is allowed to block without a bound: the
+  poll is the only wait, and it always ends in a page or an error.
+
   One endpoint escapes the challenge — `/engine/ajax/controller.php` with
   `mod=reader&method=reader/chapters&news_id=<id>` returns chapter JSON over
   plain HTTP — but it only yields chapter ids and titles, with no catalog,
