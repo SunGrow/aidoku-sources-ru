@@ -235,3 +235,22 @@ endpoints actually return:
 
   The challenge also re-triggers after bursts of requests, which is why the
   source caps parallel requests at two.
+
+  Cover and page images need a `Referer`. Aidoku requests images with no
+  headers at all by default, and the image hosts answer a request without
+  one with an intermittent 403 — a 1.5KB HTML body in place of the image.
+  That shows up as a grid where some covers are missing and others are
+  not, differing from one load to the next, rather than as a clean
+  failure. A `Referer` alone was enough; a user agent on its own was not,
+  and no cookies are needed. The source supplies it through
+  `ImageRequestProvider`. Being intermittent, the 403 is hard to pin to a
+  single trigger, so treat the header as the mitigation it is.
+
+  Cover resolution is capped by the site. Listings carry only a 130x196
+  thumbnail under `/uploads/mini/mid/`, and no larger variant of that path
+  exists — `mini/big`, `mini/small` and the rest all 404. The detail page
+  has a 268x400 poster under `/uploads/posts/`, which is also what
+  `og:image` points at, so that is the largest cover the site holds. The
+  two paths share no common form, so the poster cannot be derived from the
+  thumbnail: entries show the thumbnail until details are loaded, which is
+  what swaps in the larger one.

@@ -2,11 +2,17 @@
 	"info": {
 		"id": "ru.comx",
 		"name": "Com-X",
-		"altNames": ["ComX", "Ком-Икс", "com-x.life"],
-		"version": 5,
+		"altNames": [
+			"ComX",
+			"Ком-Икс",
+			"com-x.life"
+		],
+		"version": 6,
 		"url": "https://com-x.life",
 		"contentRating": 1,
-		"languages": ["ru"],
+		"languages": [
+			"ru"
+		],
 		"minAppVersion": "0.9.0"
 	},
 	"listings": [

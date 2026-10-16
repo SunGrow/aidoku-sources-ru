@@ -12,8 +12,10 @@
 
 use aidoku::{
 	Chapter, ContentRating, DeepLinkHandler, DeepLinkResult, FilterItem, FilterValue, HashMap,
-	Home, HomeComponent, HomeComponentValue, HomeLayout, Link, LinkValue, Listing, ListingKind,
-	ListingProvider, Manga, MangaPageResult, MangaStatus, Page, PageContent, Result, Source,
+	Home, HomeComponent, HomeComponentValue, HomeLayout, ImageRequestProvider, Link, LinkValue,
+	Listing, ListingKind,
+	ListingProvider, Manga, MangaPageResult, MangaStatus, Page, PageContent, PageContext, Result,
+	Source,
 	UpdateStrategy, WebLoginHandler,
 	alloc::{String, Vec, string::ToString},
 	helpers::uri::encode_uri_component,
@@ -934,6 +936,21 @@ impl Home for ComX {
 	}
 }
 
+impl ImageRequestProvider for ComX {
+	fn get_image_request(&self, url: String, _context: Option<PageContext>) -> Result<Request> {
+		// Aidoku asks for covers, thumbnails and pages with no headers at
+		// all. The image hosts answer a request carrying no `Referer` with
+		// an intermittent 403 — a 1.5KB HTML body in place of the image —
+		// which is what leaves a grid with some covers missing and others
+		// present, differing from one load to the next. The same request
+		// with a `Referer` was served normally.
+		//
+		// Only the one header: a user agent on its own made no difference,
+		// and the cookies are not needed to be served an image.
+		Ok(Request::get(url)?.header("Referer", BASE_URL))
+	}
+}
+
 impl DeepLinkHandler for ComX {
 	fn handle_deep_link(&self, url: String) -> Result<Option<DeepLinkResult>> {
 		let Some(path) = url.strip_prefix(BASE_URL) else {
@@ -1018,4 +1035,11 @@ impl WebLoginHandler for ComX {
 	}
 }
 
-register_source!(ComX, ListingProvider, DeepLinkHandler, WebLoginHandler, Home);
+register_source!(
+	ComX,
+	ListingProvider,
+	DeepLinkHandler,
+	WebLoginHandler,
+	Home,
+	ImageRequestProvider
+);
