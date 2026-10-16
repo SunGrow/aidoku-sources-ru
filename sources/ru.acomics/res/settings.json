@@ -1,0 +1,18 @@
+[
+	{
+		"type": "group",
+		"title": "Аккаунт",
+		"footer": "Вход не обязателен: каталог и чтение работают и без него. Аккаунт нужен для подписок и ленты на сайте. Комиксы с рейтингом R и NC-17 открываются и без входа.",
+		"items": [
+			{
+				"type": "login",
+				"key": "login",
+				"title": "Войти на AComics",
+				"method": "web",
+				"url": "https://acomics.ru/auth/login",
+				"clearCookiesOnLogOut": true,
+				"logoutTitle": "Выйти"
+			}
+		]
+	}
+]

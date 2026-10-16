@@ -5,20 +5,28 @@
 //! talks JSON rather than scraping HTML.
 
 use aidoku::{
-	AidokuError, Chapter, ContentRating, DeepLinkHandler, DeepLinkResult, FilterValue, Listing,
-	ListingProvider, Manga, MangaPageResult, MangaStatus, Page, PageContent, Result, Source,
-	UpdateStrategy, Viewer,
+	AidokuError, BasicLoginHandler, Chapter, ContentRating, DeepLinkHandler, DeepLinkResult,
+	FilterValue, Listing, ListingProvider, Manga, MangaPageResult, MangaStatus, Page, PageContent,
+	Result, Source, UpdateStrategy, Viewer,
 	alloc::{String, Vec, string::ToString},
 	helpers::uri::QueryParameters,
-	imports::{net::Request, std::parse_date},
+	imports::{
+		defaults::{DefaultValue, defaults_get, defaults_set},
+		net::Request,
+		std::parse_date,
+	},
 	prelude::*,
 };
 use core::cmp::Ordering;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 const BASE_URL: &str = "https://wamanga.ru";
 const API_URL: &str = "https://wamanga.ru/api/v1";
 const PAGE_LIMIT: i32 = 30;
+
+/// Defaults keys holding the JWT pair issued by `/auth/login`.
+const ACCESS_TOKEN_KEY: &str = "login.accessToken";
+const REFRESH_TOKEN_KEY: &str = "login.refreshToken";
 
 /// Date format used by every timestamp the API returns, e.g.
 /// `2026-08-03T19:11:08.633Z`. The fractional part and the trailing `Z` are
@@ -68,12 +76,40 @@ struct ApiChapterDetail {
 	files: Option<Vec<ApiFile>>,
 }
 
+#[derive(Serialize)]
+struct LoginRequest<'a> {
+	username: &'a str,
+	password: &'a str,
+}
+
+/// `/auth/login` answers with a JWT pair in snake_case, unlike the rest of the
+/// API.
+#[derive(Deserialize)]
+struct LoginResponse {
+	access_token: String,
+	refresh_token: String,
+}
+
 // MARK: - Helpers
 
 /// Treats blank strings as absent. The API returns `""` rather than `null` for
 /// missing chapter titles and descriptions.
 fn non_empty(value: Option<String>) -> Option<String> {
 	value.filter(|s| !s.trim().is_empty())
+}
+
+fn access_token() -> Option<String> {
+	defaults_get::<String>(ACCESS_TOKEN_KEY).filter(|token| !token.is_empty())
+}
+
+/// Builds a GET request, carrying the bearer token when the reader is signed
+/// in. Browsing works fine signed out, so a missing token is not an error.
+fn api_get(url: String) -> Result<Request> {
+	let request = Request::get(url)?;
+	Ok(match access_token() {
+		Some(token) => request.header("Authorization", format!("Bearer {token}").as_str()),
+		None => request,
+	})
 }
 
 /// Resolves the `/app/uploads/...` paths the API returns into absolute urls.
@@ -184,7 +220,7 @@ impl WaManga {
 	/// may be another one.
 	fn fetch_list(&self, query: QueryParameters) -> Result<MangaPageResult> {
 		let url = format!("{API_URL}/manga?{query}");
-		let entries: Vec<ApiManga> = Request::get(url)?.json_owned()?;
+		let entries: Vec<ApiManga> = api_get(url)?.json_owned()?;
 		let has_next_page = entries.len() as i32 >= PAGE_LIMIT;
 
 		Ok(MangaPageResult {
@@ -273,13 +309,13 @@ impl Source for WaManga {
 	) -> Result<Manga> {
 		if needs_details {
 			let url = format!("{API_URL}/manga/{}", manga.key);
-			let details: ApiManga = Request::get(url)?.json_owned()?;
+			let details: ApiManga = api_get(url)?.json_owned()?;
 			manga.copy_from(details.into_manga());
 		}
 
 		if needs_chapters {
 			let url = format!("{API_URL}/manga/{}/chapters", manga.key);
-			let chapters: Vec<ApiChapter> = Request::get(url)?.json_owned()?;
+			let chapters: Vec<ApiChapter> = api_get(url)?.json_owned()?;
 			let mut chapters: Vec<Chapter> =
 				chapters.into_iter().map(ApiChapter::into_chapter).collect();
 
@@ -297,7 +333,7 @@ impl Source for WaManga {
 
 	fn get_page_list(&self, _manga: Manga, chapter: Chapter) -> Result<Vec<Page>> {
 		let url = format!("{API_URL}/chapters/{}", chapter.key);
-		let detail: ApiChapterDetail = Request::get(url)?.json_owned()?;
+		let detail: ApiChapterDetail = api_get(url)?.json_owned()?;
 
 		let Some(mut files) = detail.files else {
 			bail!("Chapter contains no pages");
@@ -366,10 +402,52 @@ impl DeepLinkHandler for WaManga {
 		};
 
 		let lookup = format!("{API_URL}/manga/get/{kind}/{slug}?chapters=false");
-		let manga: ApiManga = Request::get(lookup)?.json_owned()?;
+		let manga: ApiManga = api_get(lookup)?.json_owned()?;
 
 		Ok(Some(DeepLinkResult::Manga { key: manga.id }))
 	}
 }
 
-register_source!(WaManga, ListingProvider, DeepLinkHandler);
+impl BasicLoginHandler for WaManga {
+	fn handle_basic_login(&self, _key: String, username: String, password: String) -> Result<bool> {
+		// Aidoku sends empty credentials when the reader logs out.
+		if username.is_empty() && password.is_empty() {
+			defaults_set(ACCESS_TOKEN_KEY, DefaultValue::Null);
+			defaults_set(REFRESH_TOKEN_KEY, DefaultValue::Null);
+			return Ok(false);
+		}
+
+		let body = serde_json::to_string(&LoginRequest {
+			username: &username,
+			password: &password,
+		})
+		.map_err(|_| error!("Could not encode the login request"))?;
+
+		let response = Request::post(format!("{API_URL}/auth/login"))?
+			.header("Content-Type", "application/json")
+			.body(body)
+			.send()?;
+
+		// 401 is a wrong password and 404 an unknown user; both just mean the
+		// login did not succeed.
+		if response.status_code() != 200 {
+			return Ok(false);
+		}
+
+		let tokens: LoginResponse = response.get_json_owned()?;
+		defaults_set(ACCESS_TOKEN_KEY, DefaultValue::String(tokens.access_token));
+		defaults_set(
+			REFRESH_TOKEN_KEY,
+			DefaultValue::String(tokens.refresh_token),
+		);
+
+		Ok(true)
+	}
+}
+
+register_source!(
+	WaManga,
+	ListingProvider,
+	DeepLinkHandler,
+	BasicLoginHandler
+);

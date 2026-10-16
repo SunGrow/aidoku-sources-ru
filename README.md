@@ -16,10 +16,23 @@ Aidoku 0.7.1 or newer is required.
 
 ## Sources
 
-| Source | Site | Notes |
-|---|---|---|
-| WaManga | [wamanga.ru](https://wamanga.ru) | JSON API. Search, filters (type, status, genre, year), listings, deep links. |
-| AComics | [acomics.ru](https://acomics.ru) | Webcomics. Each strip is a single-page chapter. Search, genre/rating filters, listings, deep links. |
+| Source | Site | Login | Notes |
+|---|---|---|---|
+| WaManga | [wamanga.ru](https://wamanga.ru) | username + password | JSON API. Search, filters (type, status, genre, year), listings, deep links. |
+| AComics | [acomics.ru](https://acomics.ru) | web sign-in | Webcomics. Each strip is a single-page chapter. Search, genre/rating filters, listings, deep links. |
+
+### Accounts
+
+Both sources work fully signed out — logging in is optional and only affects
+what your account sees on the site itself (bookmarks, subscriptions, personal
+recommendations). Sign in from the source's settings page in Aidoku.
+
+- **WaManga** uses the site's JWT API (`POST /api/v1/auth/login`). Aidoku
+  prompts for the username and password, and the returned access token is
+  attached as a bearer token to later API requests.
+- **AComics** uses Aidoku's web sign-in: it opens the site's own login page so
+  the password is entered on the site rather than handled by the source, and
+  the session cookie is reused for requests. Logging out clears those cookies.
 
 ### Sites not implemented yet
 
@@ -27,6 +40,11 @@ These were attempted and are blocked by anti-bot measures. Every result below
 was observed from a connection egressing in Singapore, so some are plausibly
 geo- or IP-based and may behave differently from a Russian network — if a site
 loads normally for you, it is worth retrying.
+
+Adding a login does not unblock any of them. Remanga, MangaLib and the Grouple
+sites are all fronted by DDoS-Guard, which rejects the request at the edge:
+`api.cdnlibs.org` answers `403` from `Server: ddos-guard` even for its own
+`/api/auth/login` endpoint, so there is no way to authenticate past it.
 
 | Site | What happens |
 |---|---|

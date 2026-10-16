@@ -3,7 +3,7 @@
 		"id": "ru.acomics",
 		"name": "AComics",
 		"altNames": ["Авторский Комикс", "АКомикс"],
-		"version": 1,
+		"version": 2,
 		"url": "https://acomics.ru",
 		"contentRating": 1,
 		"languages": ["ru"],

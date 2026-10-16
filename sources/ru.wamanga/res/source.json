@@ -3,7 +3,7 @@
 		"id": "ru.wamanga",
 		"name": "WaManga",
 		"altNames": ["ВаМанга"],
-		"version": 1,
+		"version": 2,
 		"url": "https://wamanga.ru",
 		"contentRating": 1,
 		"languages": ["ru"],

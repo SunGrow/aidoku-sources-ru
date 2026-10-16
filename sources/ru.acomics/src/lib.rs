@@ -5,9 +5,9 @@
 //! exposed as a single-page chapter rather than trying to group them.
 
 use aidoku::{
-	Chapter, ContentRating, DeepLinkHandler, DeepLinkResult, FilterValue, Listing,
+	Chapter, ContentRating, DeepLinkHandler, DeepLinkResult, FilterValue, HashMap, Listing,
 	ListingProvider, Manga, MangaPageResult, Page, PageContent, Result, Source, UpdateStrategy,
-	Viewer,
+	Viewer, WebLoginHandler,
 	alloc::{String, Vec, string::ToString},
 	helpers::uri::QueryParameters,
 	imports::{html::Document, net::Request},
@@ -79,6 +79,11 @@ fn parse_cards(html: &Document) -> Vec<Manga> {
 			})
 		})
 		.collect()
+}
+
+fn strip_image(html: &Document) -> Option<String> {
+	html.select_first("section.reader-issue img.issue")
+		.and_then(|img| img.attr("src"))
 }
 
 /// Reads a value out of the `<p><b>Label:</b> value</p>` rows on an about page.
@@ -227,11 +232,15 @@ impl Source for AComics {
 				}
 			}
 
-			// The catalog exposes an age rating per comic; "R" and above are the
-			// ones worth marking.
-			manga.content_rating = match labelled_value(&html, "Возрастной рейтинг:") {
-				Some(rating) if rating.contains("NC-17") => ContentRating::NSFW,
-				Some(rating) if rating.contains("R") => ContentRating::Suggestive,
+			// Ratings are NR, G, PG, PG-13, R and NC-17. These are matched
+			// exactly: a substring test would read the "R" in "NR" (not rated)
+			// as an adult rating.
+			manga.content_rating = match labelled_value(&html, "Возрастной рейтинг:")
+				.as_deref()
+				.map(str::trim)
+			{
+				Some("NC-17") => ContentRating::NSFW,
+				Some("R") | Some("PG-13") => ContentRating::Suggestive,
 				_ => ContentRating::Safe,
 			};
 		}
@@ -268,13 +277,24 @@ impl Source for AComics {
 
 	fn get_page_list(&self, manga: Manga, chapter: Chapter) -> Result<Vec<Page>> {
 		let url = format!("{BASE_URL}/~{}/{}", manga.key, chapter.key);
-		let html = Request::get(url)?.html()?;
 
-		let Some(src) = html
-			.select_first("section.reader-issue img.issue")
-			.and_then(|img| img.attr("src"))
-		else {
-			bail!("Could not find the strip image");
+		let src = match strip_image(&Request::get(&url)?.html()?) {
+			Some(src) => src,
+			None => {
+				// Comics rated R or NC-17 serve an age gate in place of the
+				// strip. Confirming it posts the same form the gate displays,
+				// which returns the strip directly and sets a cookie so later
+				// requests skip the gate.
+				let confirmed = Request::post(&url)?
+					.header("Content-Type", "application/x-www-form-urlencoded")
+					.body("ageRestrict=17")
+					.html()?;
+
+				let Some(src) = strip_image(&confirmed) else {
+					bail!("Could not find the strip image");
+				};
+				src
+			}
 		};
 
 		Ok(Vec::from([Page {
@@ -322,4 +342,16 @@ impl DeepLinkHandler for AComics {
 	}
 }
 
-register_source!(AComics, ListingProvider, DeepLinkHandler);
+impl WebLoginHandler for AComics {
+	fn handle_web_login(&self, _key: String, _cookies: HashMap<String, String>) -> Result<bool> {
+		// The session cookie's name isn't documented, so rather than guessing
+		// at one, ask the site: the header carries the login form only while
+		// signed out.
+		let html = Request::get(format!("{BASE_URL}/comics"))?.html()?;
+		Ok(html
+			.select_first("form[action=\"/action/guest/login\"]")
+			.is_none())
+	}
+}
+
+register_source!(AComics, ListingProvider, DeepLinkHandler, WebLoginHandler);
