@@ -151,8 +151,16 @@ endpoints actually return:
   So the source loads pages in Aidoku's web view, which can run the script,
   and keeps the cookies that come out of it. Later requests go out as plain
   HTTP with those cookies attached and only fall back to the web view when
-  they stop being accepted. This is what forces the 0.9.0 minimum, since
-  `eval_async` and `get_cookies` are 0.9.0 APIs.
+  they stop being accepted. `get_cookies` is a 0.9.0 API, which is what
+  forces the 0.9.0 minimum.
+
+  The interstitial is the page that finishes loading first, so the document
+  has to be polled until the real one replaces it. That polling is done with
+  `sleep` and the synchronous `eval` rather than by handing one promise to
+  `eval_async`: on device `eval_async` returned no result at all, which the
+  CLI's own version table hints at when it notes the call crashed before
+  0.9. If the document cannot be read out of the web view, the source still
+  retries the page over plain HTTP with the cookies the challenge issued.
 
   One endpoint escapes the challenge — `/engine/ajax/controller.php` with
   `mod=reader&method=reader/chapters&news_id=<id>` returns chapter JSON over

@@ -21,7 +21,7 @@ use aidoku::{
 		html::{Document, Html},
 		js::{Cookie, WebView},
 		net::Request,
-		std::parse_date,
+		std::{parse_date, sleep},
 	},
 	prelude::*,
 };
@@ -82,8 +82,12 @@ const DATA_MARKER: &str = "window.__DATA__";
 /// solved, so later requests can skip the web view.
 const COOKIE_KEY: &str = "gate.cookies";
 
-/// How long the web view is given to work through the challenge.
-const CHALLENGE_TIMEOUT_MS: i32 = 20000;
+/// How many one second polls the web view is given to work through the
+/// challenge before giving up on it.
+const CHALLENGE_ATTEMPTS: usize = 20;
+
+/// Reads the document as it currently stands in the web view.
+const READ_DOCUMENT: &str = "document.documentElement.outerHTML";
 
 fn stored_cookies() -> Option<String> {
 	defaults_get::<String>(COOKIE_KEY).filter(|value| !value.is_empty())
@@ -128,35 +132,51 @@ fn solve_challenge(url: &str, marker: &str) -> Result<String> {
 	// The interstitial is what finishes loading first; it only navigates on
 	// to the real page once its script has run. So rather than reading the
 	// document straight away, poll it until the marker shows up.
-	let script = format!(
-		"new Promise(function(resolve){{\
-		var deadline=Date.now()+{};\
-		(function poll(){{\
-		var root=document.documentElement;\
-		var html=root?root.outerHTML:'';\
-		if(html.indexOf({:?})!==-1||Date.now()>deadline){{resolve(html);}}\
-		else{{setTimeout(poll,250);}}\
-		}})();}})",
-		CHALLENGE_TIMEOUT_MS,
-		marker
-	);
-
-	let html = webview
-		.eval_async(&script)
-		.map_err(|_| error!("Could not read the page"))?;
-
-	if !html.contains(marker) {
-		bail!("The site's challenge did not complete");
-	}
-
-	if let Ok(cookies) = webview.get_cookies() {
-		let header = cookie_header(&cookies);
-		if !header.is_empty() {
-			defaults_set(COOKIE_KEY, DefaultValue::String(header));
+	//
+	// The polling is done out here with `sleep` and a plain `eval` rather
+	// than handed to `eval_async` as one promise, because the asynchronous
+	// call returns nothing at all on device.
+	let mut html = String::new();
+	for attempt in 0..CHALLENGE_ATTEMPTS {
+		if attempt > 0 {
+			sleep(1);
+		}
+		// Reading can fail while a navigation is in flight, which is not
+		// fatal here: the next poll picks it up.
+		if let Ok(current) = webview.eval(READ_DOCUMENT) {
+			html = current;
+			if html.contains(marker) {
+				break;
+			}
 		}
 	}
 
-	Ok(html)
+	// Keep whatever grant the challenge issued even if the document could
+	// not be read, since the cookies alone may be enough to fetch the page
+	// over plain HTTP.
+	let mut grant = None;
+	if let Ok(cookies) = webview.get_cookies() {
+		let header = cookie_header(&cookies);
+		if !header.is_empty() {
+			defaults_set(COOKIE_KEY, DefaultValue::String(header.clone()));
+			grant = Some(header);
+		}
+	}
+
+	if html.contains(marker) {
+		return Ok(html);
+	}
+
+	// Last resort: ask for the page again carrying the new cookies.
+	if let Some(grant) = grant {
+		if let Ok(body) = Request::get(url)?.header("Cookie", grant.as_str()).string() {
+			if body.contains(marker) {
+				return Ok(body);
+			}
+		}
+	}
+
+	bail!("The site's challenge did not complete")
 }
 
 /// Builds a `Cookie` header out of the web view's store, keeping only this
