@@ -266,7 +266,14 @@ impl WaManga {
 	/// bare array with no total count, so a full page is taken to mean there
 	/// may be another one.
 	fn fetch_list(&self, query: QueryParameters) -> Result<MangaPageResult> {
-		let url = format!("{API_URL}/manga?{query}");
+		self.fetch_endpoint("manga", query)
+	}
+
+	/// Runs a query against any endpoint that answers with a bare array
+	/// of titles. The recommendation endpoints share that shape and take
+	/// the same `limit` and `offset`, so they page like the catalog.
+	fn fetch_endpoint(&self, path: &str, query: QueryParameters) -> Result<MangaPageResult> {
+		let url = format!("{API_URL}/{path}?{query}");
 		let entries: Vec<ApiManga> = api_get(url)?.json_owned()?;
 		let has_next_page = entries.len() as i32 >= PAGE_LIMIT;
 
@@ -274,6 +281,20 @@ impl WaManga {
 			entries: entries.into_iter().map(ApiManga::into_manga).collect(),
 			has_next_page,
 		})
+	}
+
+	/// Which recommendation endpoint to ask.
+	///
+	/// `for-you` is personalised and answers 403 without a token, so the
+	/// public trending list stands in while signed out. Both return the
+	/// same shape, so the listing works either way — it is simply built
+	/// from the reader's own history once they are signed in.
+	fn recommendations_path() -> &'static str {
+		if access_token().is_some() {
+			"recommendations/for-you"
+		} else {
+			"recommendations/trending"
+		}
 	}
 
 	fn base_query(page: i32) -> QueryParameters {
@@ -419,6 +440,11 @@ impl ListingProvider for WaManga {
 	fn get_manga_list(&self, listing: Listing, page: i32) -> Result<MangaPageResult> {
 		let mut params = Self::base_query(page);
 
+		// Recommendations are their own endpoint and take no sort.
+		if listing.id == "recommended" {
+			return self.fetch_endpoint(Self::recommendations_path(), params);
+		}
+
 		let sort_key = match listing.id.as_str() {
 			"popular" => "views",
 			"new" => "createdAt",
@@ -437,13 +463,11 @@ impl Home for WaManga {
 		let mut components = Vec::new();
 
 		// The API answers quickly and is not rate limited in any way the
-		// source has run into, so the page is built from the same three
-		// listings the source already offers. A row that fails is left
-		// out rather than taking the whole page down with it.
+		// source has run into, so the page is built from the listings the
+		// source already offers. A row that fails is left out rather than
+		// taking the whole page down with it.
 		for (title, id, sort_key, big) in [
 			("Популярное", "popular", "views", true),
-			("Обновления", "latest", "updatedAt", false),
-			("Новинки", "new", "createdAt", false),
 		] {
 			let mut params = Self::base_query(1);
 			params.push("sortKey", Some(sort_key));
@@ -456,6 +480,31 @@ impl Home for WaManga {
 				continue;
 			}
 			components.push(home_row(title, id, result.entries, big));
+		}
+
+		// Straight after the carousel, since this is the row a reader is
+		// most likely to want. Signed out it is the public trending list.
+		if let Ok(result) = self.fetch_endpoint(Self::recommendations_path(), Self::base_query(1))
+			&& !result.entries.is_empty()
+		{
+			components.push(home_row("Рекомендации", "recommended", result.entries, false));
+		}
+
+		for (title, id, sort_key) in [
+			("Обновления", "latest", "updatedAt"),
+			("Новинки", "new", "createdAt"),
+		] {
+			let mut params = Self::base_query(1);
+			params.push("sortKey", Some(sort_key));
+			params.push("sortDescending", Some("true"));
+
+			let Ok(result) = self.fetch_list(params) else {
+				continue;
+			};
+			if result.entries.is_empty() {
+				continue;
+			}
+			components.push(home_row(title, id, result.entries, false));
 		}
 
 		Ok(HomeLayout { components })

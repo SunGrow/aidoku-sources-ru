@@ -6,7 +6,7 @@
 			"Авторский Комикс",
 			"АКомикс"
 		],
-		"version": 4,
+		"version": 5,
 		"url": "https://acomics.ru",
 		"contentRating": 1,
 		"languages": [
@@ -18,6 +18,10 @@
 		{
 			"id": "popular",
 			"name": "Популярное"
+		},
+		{
+			"id": "featured",
+			"name": "Рекомендуемые"
 		},
 		{
 			"id": "latest",

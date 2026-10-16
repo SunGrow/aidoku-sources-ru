@@ -5,7 +5,7 @@
 		"altNames": [
 			"ВаМанга"
 		],
-		"version": 3,
+		"version": 4,
 		"url": "https://wamanga.ru",
 		"contentRating": 1,
 		"languages": [
@@ -17,6 +17,10 @@
 		{
 			"id": "popular",
 			"name": "Популярное"
+		},
+		{
+			"id": "recommended",
+			"name": "Рекомендации"
 		},
 		{
 			"id": "latest",

@@ -240,6 +240,15 @@ impl AComics {
 
 		format!("{BASE_URL}/comics?{params}")
 	}
+
+	/// The site's own recommended list, which it links as
+	/// «Рекомендуемые» beside the catalog. It is a separate page rather
+	/// than a catalog sort, and takes neither sort nor filters, but it
+	/// pages with the same `skip` and serves the same cards.
+	fn featured_url(page: i32) -> String {
+		let skip = (page.max(1) - 1) * PAGE_SIZE;
+		format!("{BASE_URL}/featured?skip={skip}")
+	}
 }
 
 impl Source for AComics {
@@ -383,6 +392,10 @@ impl Source for AComics {
 
 impl ListingProvider for AComics {
 	fn get_manga_list(&self, listing: Listing, page: i32) -> Result<MangaPageResult> {
+		if listing.id == "featured" {
+			return self.fetch_cards(Self::featured_url(page));
+		}
+
 		let sort = match listing.id.as_str() {
 			"popular" => "subscr_count",
 			"longest" => "issue_count",
@@ -396,15 +409,31 @@ impl Home for AComics {
 	fn get_home(&self) -> Result<HomeLayout> {
 		let mut components = Vec::new();
 
-		// Three plain catalog requests, none of them gated, so the page
-		// is built from the listings the source already offers. A row
-		// that fails is left out rather than failing the whole page.
-		for (title, id, sort, big) in [
-			("Популярное", "popular", "subscr_count", true),
-			("Обновления", "latest", "last_update", false),
-			("Самые длинные", "longest", "issue_count", false),
+		// Plain catalog requests, none of them gated, so the page is
+		// built from the listings the source already offers. A row that
+		// fails is left out rather than failing the whole page.
+		for (title, id, url, big) in [
+			(
+				"Популярное",
+				"popular",
+				Self::catalog_url(1, "subscr_count", &[]),
+				true,
+			),
+			("Рекомендуемые", "featured", Self::featured_url(1), false),
+			(
+				"Обновления",
+				"latest",
+				Self::catalog_url(1, "last_update", &[]),
+				false,
+			),
+			(
+				"Самые длинные",
+				"longest",
+				Self::catalog_url(1, "issue_count", &[]),
+				false,
+			),
 		] {
-			let Ok(result) = self.fetch_cards(Self::catalog_url(1, sort, &[])) else {
+			let Ok(result) = self.fetch_cards(url) else {
 				continue;
 			};
 			if result.entries.is_empty() {

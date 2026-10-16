@@ -36,6 +36,22 @@ Com-X carries far more comics than manga, so its listings cover both:
 **Комиксы** unions every western publisher section, with **Marvel** and
 **DC** split out, alongside **Манга**, **Манхва** and **Маньхуа**.
 
+Two of the three offer recommendations, as a listing and a home row:
+
+- **WaManga** has a recommendations API. Signed in, **Рекомендации** is
+  built from your own reading (`/recommendations/for-you`); signed out it
+  falls back to the site's public trending list, since the personalised
+  endpoints answer 403 without a token. Both return the same shape, so
+  the listing works either way.
+- **AComics** has an editorially curated **Рекомендуемые** page, which the
+  site links beside its catalog. It is a page of its own rather than a
+  catalog sort, so it takes no filters, but it pages like the catalog.
+- **Com-X** has none. There is no recommendations, similar-titles or
+  related block anywhere on it — detail pages carry no such section, and
+  the only occurrence of «рекомендую» on one is the share button's text.
+  Nothing was added there rather than passing something else off as a
+  recommendation.
+
 ### Accounts
 
 All three sources work fully signed out — logging in is optional and only affects
@@ -161,6 +177,13 @@ Site behaviour drifts, and the public reference parsers lag behind it. Where a
 site's API was re-written, the implementation here follows what the live
 endpoints actually return:
 
+- **WaManga** exposes `/api/v1/recommendations` with `trending`, `new`,
+  `for-you` and `similar/{mangaId}` beneath it, plus a `/manga/homepage`
+  that returns six ready-made sections in one response. `for-you` and the
+  bare `/recommendations` require a bearer token and answer 403 without
+  one; `trending` and `new` are public. They all return the same bare
+  array of titles the catalog does and take the same `limit` and `offset`,
+  so they page without any special handling.
 - **WaManga** serves an OpenAPI spec at `/api/docs-json`. The current API is
   `/api/v1/manga` (paginated with `offset`/`limit`, searched with `query`,
   array filters passed as repeated parameters). Image paths come back as
