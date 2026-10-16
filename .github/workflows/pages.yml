@@ -1,0 +1,80 @@
+name: Build source list
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Only one Pages deployment at a time, but let PR builds queue normally.
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  SOURCE_LIST_NAME: Russian Manga & Comics
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Add wasm target
+        run: rustup target add wasm32-unknown-unknown
+
+      # aidoku-cli is installed from git, so key the cache on the resolved
+      # commit to pick up toolkit updates without rebuilding every run.
+      - name: Resolve aidoku-rs revision
+        id: sdk
+        run: |
+          rev=$(git ls-remote https://github.com/Aidoku/aidoku-rs HEAD | cut -f1)
+          echo "rev=$rev" >> "$GITHUB_OUTPUT"
+
+      - name: Cache aidoku-cli
+        id: cli-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/aidoku
+          key: aidoku-cli-${{ runner.os }}-${{ steps.sdk.outputs.rev }}
+
+      - name: Install aidoku-cli
+        if: steps.cli-cache.outputs.cache-hit != 'true'
+        run: cargo install --git https://github.com/Aidoku/aidoku-rs aidoku-cli --locked
+
+      - name: Cache source builds
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            sources/*/target
+          key: sources-${{ runner.os }}-${{ steps.sdk.outputs.rev }}-${{ hashFiles('sources/*/Cargo.lock') }}
+          restore-keys: |
+            sources-${{ runner.os }}-${{ steps.sdk.outputs.rev }}-
+
+      - name: Build and verify all sources
+        run: bash tools/build-all.sh
+
+      - name: Upload Pages artifact
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+
+  deploy:
+    needs: build
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

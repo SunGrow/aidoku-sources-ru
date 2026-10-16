@@ -1,0 +1,30 @@
+{
+	"info": {
+		"id": "ru.wamanga",
+		"name": "WaManga",
+		"altNames": ["ВаМанга"],
+		"version": 1,
+		"url": "https://wamanga.ru",
+		"contentRating": 1,
+		"languages": ["ru"],
+		"minAppVersion": "0.7.1"
+	},
+	"listings": [
+		{
+			"id": "popular",
+			"name": "Популярное"
+		},
+		{
+			"id": "latest",
+			"name": "Обновления"
+		},
+		{
+			"id": "new",
+			"name": "Новинки"
+		}
+	],
+	"config": {
+		"supportsTagSearch": true,
+		"maximumParallelRequests": 4
+	}
+}
