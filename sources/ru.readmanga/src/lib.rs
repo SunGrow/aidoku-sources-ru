@@ -27,9 +27,9 @@
 
 use aidoku::{
 	AidokuError, Chapter, ContentRating, DeepLinkHandler, DeepLinkResult, FilterItem, FilterValue,
-	Home, HomeComponent, HomeComponentValue, HomeLayout, Link, LinkValue, Listing, ListingKind,
-	ListingProvider, Manga, MangaPageResult, MangaStatus, Page, PageContent, Result, Source,
-	UpdateStrategy, Viewer,
+	Home, HomeComponent, HomeComponentValue, HomeLayout, ImageRequestProvider, Link, LinkValue,
+	Listing, ListingKind, ListingProvider, Manga, MangaPageResult, MangaStatus, Page, PageContent,
+	PageContext, Result, Source, UpdateStrategy, Viewer,
 	alloc::{String, Vec, string::ToString},
 	helpers::uri::QueryParameters,
 	imports::{
@@ -654,7 +654,15 @@ impl ReadManga {
 			if path.is_empty() {
 				continue;
 			}
-			urls.push(format!("{host}{dir}{path}"));
+			// A chapter whose pages were taken down declares no host and
+			// points at the site's own `/static/deleted1.png`, which the
+			// site serves. Resolving it against the base url shows that
+			// placeholder instead of a relative url nothing can fetch.
+			if host.is_empty() {
+				urls.push(format!("{}{dir}{path}", base_url()));
+			} else {
+				urls.push(format!("{host}{dir}{path}"));
+			}
 		}
 
 		urls
@@ -709,7 +717,12 @@ impl Source for ReadManga {
 	}
 
 	fn get_page_list(&self, manga: Manga, chapter: Chapter) -> Result<Vec<Page>> {
-		let url = format!("{}/{}/{}", base_url(), manga.key, chapter.key);
+		// `mtr=1` is the site's own age gate being answered. Without it a
+		// chapter of any of the 1,232 titles flagged mature renders the
+		// warning instead of the reader, and the payload this parses is
+		// simply absent — the title page is unaffected, so only the reader
+		// asks for it. On a title that is not gated it changes nothing.
+		let url = format!("{}/{}/{}?mtr=1", base_url(), manga.key, chapter.key);
 		let body = Self::request(url)?.string()?;
 
 		let pages: Vec<Page> = Self::page_urls(&body)
@@ -818,6 +831,16 @@ impl Home for ReadManga {
 	}
 }
 
+impl ImageRequestProvider for ReadManga {
+	fn get_image_request(&self, url: String, _context: Option<PageContext>) -> Result<Request> {
+		// One of the three image hosts answers a request carrying no
+		// `Referer` with a 403 and an HTML body — covers included, which
+		// is what would leave the grid empty. The other two do not care,
+		// so the one header is sent everywhere rather than guessed at.
+		Ok(Request::get(url)?.header("Referer", &format!("{}/", base_url())))
+	}
+}
+
 impl DeepLinkHandler for ReadManga {
 	fn handle_deep_link(&self, url: String) -> Result<Option<DeepLinkResult>> {
 		// Either domain can turn up in a shared link, whichever the reader
@@ -860,4 +883,10 @@ impl DeepLinkHandler for ReadManga {
 	}
 }
 
-register_source!(ReadManga, ListingProvider, DeepLinkHandler, Home);
+register_source!(
+	ReadManga,
+	ListingProvider,
+	DeepLinkHandler,
+	Home,
+	ImageRequestProvider
+);

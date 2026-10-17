@@ -1,0 +1,46 @@
+{
+	"info": {
+		"id": "ru.selfmanga",
+		"name": "SelfManga",
+		"altNames": [
+			"SelfManga",
+			"Grouple"
+		],
+		"version": 1,
+		"urls": [
+			"https://1.selfmanga.live"
+		],
+		"contentRating": 1,
+		"languages": [
+			"ru"
+		],
+		"minAppVersion": "0.9.0"
+	},
+	"listings": [
+		{
+			"id": "popular",
+			"name": "Популярное"
+		},
+		{
+			"id": "trending",
+			"name": "Читают сейчас"
+		},
+		{
+			"id": "latest",
+			"name": "Обновления"
+		},
+		{
+			"id": "rating",
+			"name": "Лучшее по оценке"
+		},
+		{
+			"id": "new",
+			"name": "Новинки"
+		}
+	],
+	"config": {
+		"supportsTagSearch": true,
+		"hidesFiltersWhileSearching": false,
+		"maximumParallelRequests": 4
+	}
+}

@@ -30,6 +30,7 @@ ICONS: dict[str, tuple[str, str, str]] = {
     "ru.readmanga": ("RM", "#3d2a0c", "#fff1d6"),
     "ru.mintmanga": ("MM", "#0d4034", "#ddfff4"),
     "ru.selfmanga": ("SM", "#43123d", "#ffe6fb"),
+    "ru.seimanga": ("SE", "#123a43", "#e6fbff"),
     "ru.usagi": ("U", "#4a1430", "#ffe3f0"),
 }
 

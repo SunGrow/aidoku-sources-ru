@@ -24,6 +24,8 @@ All six sources need Aidoku 0.9.0 or newer.
 | Remanga | [remanga.org](https://remanga.org) | — | JSON API. Search, sorting, filters (type, genre, category, status, translation status, age rating, year, rating, chapter count), listings, home page, similar titles, deep links. Served over the site's mirror. |
 | ReadManga | [readmanga.me](https://readmanga.me) | — | JSON catalogue, HTML titles. Search combined with filters (category, genre, features, age rating, production and translation status, year), listings, home page, deep links to a title or a chapter. Mirrored at `a.zazaza.me`. |
 | MangaLib | [mangalib.org](https://mangalib.org) | — | JSON API. Search combined with filters (type, status, translation status, format, genre, tag, year, rating, chapter count), listings, home page, related and similar titles, rival translations as separate chapters, deep links. |
+| SelfManga | [1.selfmanga.live](https://1.selfmanga.live) | — | Self-published Russian manga, 3,942 titles. Same engine and the same feature set as ReadManga, against a library of its own. |
+| SeiManga | [1.seimanga.me](https://1.seimanga.me) | — | Seinen and josei, 6,281 titles. Same engine and the same feature set as ReadManga, against a library of its own. |
 
 ### Browsing
 
@@ -47,11 +49,18 @@ the only one that lists rival translations side by side — a chapter
 translated by three teams appears three times, each labelled with its team,
 and opening one reads that team's pages.
 
-ReadManga has genre chips too, and the widest filter sheet of the six: its
+ReadManga has genre chips too, and the widest filter sheet here: its
 categories, genres, features and age ratings are one shared vocabulary, so
 any mixture of them can be required or excluded together, alongside the
 production status, the translation status and a year range. Its chapter
 links carry the translator, so a long run shows which team did which part.
+
+SelfManga and SeiManga browse exactly like it, each over its own library.
+Nothing is shared between the three but the engine: every filter id, genre
+list and year bound in those two sources was read from that site's own
+filter sheet, because the same format is numbered differently on each.
+SelfManga publishes no age ratings at all, so its sheet has no such control
+and its titles report an unknown rating rather than a guessed one.
 
 Recommendations differ by site:
 
@@ -132,11 +141,11 @@ recommendations). Sign in from the source's settings page in Aidoku.
   authenticates was not established: `/auth/me` redirects rather than
   challenging, and the front end is a shell that reveals nothing, so there
   was no mechanism to implement against and no account to test one with.
-- **ReadManga** has no sign-in here. Accounts on this network live on a
-  host of their own, `grouple.co`, shared across its sites, and what they
-  add — bookmarks, reading history, comments — is not used by this source.
-  Everything it does touch answers to an unauthenticated request carrying
-  nothing but a browser user agent.
+- **ReadManga, SelfManga and SeiManga** have no sign-in here. Accounts on
+  this network live on a host of their own, `grouple.co`, shared across its
+  sites, and what they add — bookmarks, reading history, comments — is not
+  used by these sources. Everything they do touch answers to an
+  unauthenticated request carrying nothing but a browser user agent.
 
 ### Sites not implemented yet
 
@@ -151,21 +160,22 @@ dead domain and three libraries that are simply not built yet.
 
 | Site | State | What happens |
 |---|---|---|
-| SelfManga, SeiManga, SelfLib | reachable, not built | Siblings of ReadManga on the same engine, with libraries of their own. See below. |
+| SelfLib | reachable, out of scope | A Grouple site, but a prose library rather than a comics one. See below. |
 | desu.me | gone | Not blocked — the domain publishes no address at all. See below. |
 
-**The Grouple siblings.** The network's other libraries — `1.selfmanga.live`
-(self-published Russian manga, 3,942 titles), `1.seimanga.me` (seinen and
-josei, 6,281) and `1.selflib.me` (1,465) — run the same engine as ReadManga
-and answer the same `/api/catalog/search`, checked on each. They are separate
-libraries rather than mirrors: the overlap between any two of them is a
-single promotional card. Each would be a near-copy of `sources/ru.readmanga`
-with a different base url and source id, which is why they are listed here
-rather than silently folded into that source — switching a source's base url
-between two different libraries would break every saved entry pointing at the
-other one. `mintmanga` and `usagi.one` answer on no prefix that was tried and
-are not in the network's own site switcher, which now lists only ReadManga,
-SelfManga and SelfLib.
+**SelfLib.** `1.selflib.me` runs the same engine as the three Grouple
+sources above and answers the same `/api/catalog/search`, which is why it
+was listed here as a sibling waiting to be built. Opening a chapter showed
+why it cannot be: it is a самиздат **prose** library. A chapter is sixty-odd
+paragraphs of text in a `chapter-content` block with no page images anywhere
+in it, and what the catalogue calls categories are audience labels — «для
+подростков», «научная проза» — rather than comic formats. Aidoku reads
+pages, so there is nothing here for a source to return. Its 1,465 titles are
+not comics and are not missing from the list by oversight.
+
+`mintmanga` and `usagi.one` answer on no prefix that was tried and are not
+in the network's own site switcher, which lists only ReadManga, SelfManga
+and SelfLib.
 
 **desu.me.** This one is not blocked and not moved. The domain is delegated
 to Cloudflare's nameservers but publishes no `A`, `AAAA` or `CNAME` record at
@@ -544,3 +554,36 @@ endpoints actually return:
   name, so the leading digits are trimmed off. A licensed title keeps its
   chapter list and loses its pages, which is the one way a chapter that
   opened yesterday comes back empty.
+
+  One more thing the reader wants: `?mtr=1` on the chapter url. It is the
+  site's own age gate being answered, and without it a chapter of any of
+  the 1,232 titles flagged `MATURE` renders the warning instead of the
+  reader, so the payload this parses is simply absent. A cookie does not
+  substitute for it. The title page is unaffected, so only the reader asks.
+
+- **SelfManga and SeiManga** (`1.selfmanga.live`, `1.seimanga.me`) are the
+  same engine as ReadManga and behave the same way, down to the `402` on a
+  missing user agent and the signed page urls that work only once the
+  signature is stripped. Three things are not shared.
+
+  Element ids are per-site. The same category, genre or status is numbered
+  differently on each, so nothing was carried over: every id in those two
+  sources, and both year bounds, was read from that site's own `__FILTERS`
+  block. SelfManga ships no `limitation` vocabulary at all, so it has no
+  age-rating filter and its titles report `Unknown` rather than a guess.
+
+  SeiManga's image host checks the `Referer`. `sei.one-way.work` answers a
+  request without one with `403` and an HTML body — covers included, which
+  would have left the grid empty — while `rm.one-way.work` and
+  `sm.one-way.work` serve the same urls to anyone. The header costs nothing
+  on the other two, so all three sources send it.
+
+  Takedowns are more common on the siblings than on ReadManga, and the
+  payload shows them plainly: every entry of such a chapter carries an
+  empty host and the path `/static/deleted1.png`. Both top-rated titles —
+  `no_way` and `tokiiskie_mstiteli` — are in that state, which is a fair
+  warning against sampling one title and calling the source broken. Out of
+  eight randomly drawn chapters per site, seven and eight respectively had
+  real pages. The empty host is resolved against the base url so the reader
+  gets the placeholder the site itself serves rather than a url nothing can
+  fetch.
