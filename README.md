@@ -12,7 +12,7 @@ from the Browse tab:
 https://sungrow.github.io/aidoku-sources-ru/index.min.json
 ```
 
-All five sources need Aidoku 0.9.0 or newer.
+All six sources need Aidoku 0.9.0 or newer.
 
 ## Sources
 
@@ -22,6 +22,7 @@ All five sources need Aidoku 0.9.0 or newer.
 | AComics | [acomics.ru](https://acomics.ru) | web sign-in | Webcomics. Each strip is a single-page chapter. Search, genre/rating filters, listings, home page, deep links. |
 | Com-X | [com-x.life](https://com-x.life) | web sign-in | Comics, manga, manhwa and manhua. Search, sorting, filters (section, genre, type, status, year, author, artist), listings, home page, deep links. |
 | Remanga | [remanga.org](https://remanga.org) | — | JSON API. Search, sorting, filters (type, genre, category, status, translation status, age rating, year, rating, chapter count), listings, home page, similar titles, deep links. Served over the site's mirror. |
+| ReadManga | [readmanga.me](https://readmanga.me) | — | JSON catalogue, HTML titles. Search combined with filters (category, genre, features, age rating, production and translation status, year), listings, home page, deep links to a title or a chapter. Mirrored at `a.zazaza.me`. |
 | MangaLib | [mangalib.org](https://mangalib.org) | — | JSON API. Search combined with filters (type, status, translation status, format, genre, tag, year, rating, chapter count), listings, home page, related and similar titles, rival translations as separate chapters, deep links. |
 
 ### Browsing
@@ -45,6 +46,12 @@ than replacing it, so the sheet stays on screen while searching. It is also
 the only one that lists rival translations side by side — a chapter
 translated by three teams appears three times, each labelled with its team,
 and opening one reads that team's pages.
+
+ReadManga has genre chips too, and the widest filter sheet of the six: its
+categories, genres, features and age ratings are one shared vocabulary, so
+any mixture of them can be required or excluded together, alongside the
+production status, the translation status and a year range. Its chapter
+links carry the translator, so a long run shows which team did which part.
 
 Recommendations differ by site:
 
@@ -72,10 +79,16 @@ Recommendations differ by site:
   one that answers what a long run raises — it names the sequel, the
   prequel, the colour version and the spin-offs, each with its relation
   spelled out — and `/similar` is the looser "readers also read" list.
+- **ReadManga** has no recommendations listing, but its title pages carry a
+  related block, which is appended to the description. It names the
+  prequel, the spin-off and the colour edition with the relation spelled
+  out, so it doubles as the volume navigation a long run otherwise lacks.
+  Entries pointing at the network's anime, drama and novel sites are left
+  out, since a manga reader cannot open them.
 
 ### Accounts
 
-All five sources work fully signed out — logging in is optional and only affects
+All six sources work fully signed out — logging in is optional and only affects
 what your account sees on the site itself (bookmarks, subscriptions, personal
 recommendations). Sign in from the source's settings page in Aidoku.
 
@@ -119,6 +132,11 @@ recommendations). Sign in from the source's settings page in Aidoku.
   authenticates was not established: `/auth/me` redirects rather than
   challenging, and the front end is a shell that reveals nothing, so there
   was no mechanism to implement against and no account to test one with.
+- **ReadManga** has no sign-in here. Accounts on this network live on a
+  host of their own, `grouple.co`, shared across its sites, and what they
+  add — bookmarks, reading history, comments — is not used by this source.
+  Everything it does touch answers to an unauthenticated request carrying
+  nothing but a browser user agent.
 
 ### Sites not implemented yet
 
@@ -128,33 +146,26 @@ This section once said DDoS-Guard rejected MangaLib and the Grouple sites
 at the edge, with no way past it. That was wrong, and wrong in a way worth
 recording: a bare `curl` was treated as the whole story. Loading the same
 sites in a browser and reading what their own pages requested showed both
-answering normally. MangaLib became a source on the strength of that; what
-is left below is a narrower problem than a block.
+answering normally, and both are sources above. What is left here is one
+dead domain and three libraries that are simply not built yet.
 
 | Site | State | What happens |
 |---|---|---|
-| Grouple family | partly reachable | The old domains are dead ends; the network now lives at `a.zazaza.me`. HTML is reachable, page images are not. See below. |
+| SelfManga, SeiManga, SelfLib | reachable, not built | Siblings of ReadManga on the same engine, with libraries of their own. See below. |
 | desu.me | gone | Not blocked — the domain publishes no address at all. See below. |
 
-**The Grouple family.** `readmanga`, `mintmanga`, `selfmanga`, `seimanga` and
-`usagi.one` all answer `402 Payment Required` with a 24-byte
-`NOT FOUND IN THE ADDRESS` body, which reads like a hard block but is only
-their reply to a non-browser user agent. With a browser one, `readmanga.live`
-answers `301` to `https://a.zazaza.me/` — the network has moved, and the old
-domains are forwarders rather than the site. ZazaZa runs the same engine:
-`/list?sortType=…` pages the catalogue, a title page carries its chapters as
-`/{slug}/vol{N}/{M}`, `/search/suggestion?query=` answers JSON, and the
-reader still embeds its pages in a `readerInit(chapterInfo, [[host, '',
-path, w, h], …])` array. A browser user agent alone is enough for all of it.
-
-What still blocks a source is the images. Page URLs are signed with a
-timestamp and hash, and requesting one returns `300` with a 77-byte body
-holding a link to an unrelated Wikipedia photograph instead of the page. The
-signature had not expired, a shared cookie jar made no difference, and the
-other hosts the reader names serve different pages rather than mirroring the
-same path, so there is no fallback to fail over to. Everything except the
-images is in reach; until they are, the source would open a chapter onto
-pumpkins.
+**The Grouple siblings.** The network's other libraries — `1.selfmanga.live`
+(self-published Russian manga, 3,942 titles), `1.seimanga.me` (seinen and
+josei, 6,281) and `1.selflib.me` (1,465) — run the same engine as ReadManga
+and answer the same `/api/catalog/search`, checked on each. They are separate
+libraries rather than mirrors: the overlap between any two of them is a
+single promotional card. Each would be a near-copy of `sources/ru.readmanga`
+with a different base url and source id, which is why they are listed here
+rather than silently folded into that source — switching a source's base url
+between two different libraries would break every saved entry pointing at the
+other one. `mintmanga` and `usagi.one` answer on no prefix that was tried and
+are not in the network's own site switcher, which now lists only ReadManga,
+SelfManga and SelfLib.
 
 **desu.me.** This one is not blocked and not moved. The domain is delegated
 to Cloudflare's nameservers but publishes no `A`, `AAAA` or `CNAME` record at
@@ -178,7 +189,7 @@ setting, and the source API has no sync trait or manifest field at all.
 What a source does decide is whether the synced rows still resolve on the
 other device. The library, chapter and history records are keyed on the
 source id together with the manga and chapter keys, so those keys have to
-mean the same thing everywhere and not drift between versions. All five
+mean the same thing everywhere and not drift between versions. All six
 sources here derive them from the site's own identifiers — WaManga from the
 API's ids, AComics from the permanent `~slug`, Com-X from the numeric id
 the URL carries, Remanga from the title's `dir` — with no device, session
@@ -483,3 +494,53 @@ endpoints actually return:
   without needing a `Referer`. The JPEG host is used, because a format
   every reader can decode is worth more here than the third off the
   transfer.
+
+- **ReadManga** (`readmanga.me`, mirrored at `a.zazaza.me`: the two report
+  31,198 and 31,200 titles and their first catalogue page agreed on 17 of
+  18) wants one thing and nothing else: a
+  browser `User-Agent`. Without one every url on it, API and page alike,
+  answers `402` with a 24-byte `NOT FOUND IN THE ADDRESS` body, which reads
+  like a hard block and is only a filter on non-browser clients. No cookies,
+  no `Referer`, no sign-in.
+
+  Its catalogue is JSON — `/api/catalog/search`, the endpoint the site's own
+  filter sheet calls — while the titles and chapters around it are
+  server-rendered HTML with no detail endpoint to ask instead. The catalogue
+  pages with `offset`, answers 50 rows, and reports a real `total`.
+
+  Guessing its filter parameters was a waste of fifteen requests: it accepts
+  and silently ignores every name that is not its own, `categories`,
+  `genres`, `tags`, `el_3001=in` and the rest alike. The real ones are in the
+  code it ships. Categories, genres, features and age ratings are one shared
+  id space addressed by `includeElementIds` / `excludeElementIds`, repeating
+  which intersects; the statuses take `includeProductionStatuses` and
+  `includeTranslationStatuses`; the site's canned filters take
+  `includeSearchFilter`; and the year range is one `years=min,max` parameter,
+  which is why an open end of the range filter is completed with the site's
+  own bound rather than left out. The vocabulary for all of them ships in the
+  catalogue page as `__FILTERS.<key>` assignments, which is what generates
+  `filters.json`. An unknown `sortType` is read as `RATING` rather than
+  rejected.
+
+  The page images are the reason this source did not exist until now. The
+  reader is handed its pages as `readerInit(chapterInfo, [[host, dir,
+  "path?t=…&u=…&h=…", width, height, ''], …])`, and fetching one of those
+  urls *with* its signed query returns `300` and a 77-byte body holding a
+  decoy url pointing at an unrelated photograph on Wikimedia. The earlier
+  conclusion here — that the signature was the obstacle and the source could
+  not get past it — had it backwards. The signature is the trap. The site's
+  own reader never sends it: it strips the query before assigning `img.src`,
+  which is visible in the DOM of a rendered chapter, where every `img.src`
+  is the bare path. The same url without the query answers `200` with the
+  real page and needs no headers at all. Checked across three titles and
+  five chapters, the images returned match the dimensions the payload
+  declares.
+
+  Chapters come from the title page's table. A row's `data-num` is the
+  chapter number times ten, so the number is read from the link instead,
+  where it is written plainly and keeps halves like `99.5` intact. The
+  link's `title` attribute is the translating team, which becomes the
+  chapter's scanlator; its text repeats the volume and chapter before any
+  name, so the leading digits are trimmed off. A licensed title keeps its
+  chapter list and loses its pages, which is the one way a chapter that
+  opened yesterday comes back empty.

@@ -1,0 +1,50 @@
+{
+	"info": {
+		"id": "ru.readmanga",
+		"name": "ReadManga",
+		"altNames": [
+			"RM.me",
+			"ZazaZa",
+			"Ридманга",
+			"Grouple"
+		],
+		"version": 1,
+		"urls": [
+			"https://readmanga.me",
+			"https://a.zazaza.me"
+		],
+		"contentRating": 1,
+		"languages": [
+			"ru"
+		],
+		"minAppVersion": "0.9.0"
+	},
+	"listings": [
+		{
+			"id": "popular",
+			"name": "Популярное"
+		},
+		{
+			"id": "trending",
+			"name": "Читают сейчас"
+		},
+		{
+			"id": "latest",
+			"name": "Обновления"
+		},
+		{
+			"id": "rating",
+			"name": "Лучшее по оценке"
+		},
+		{
+			"id": "new",
+			"name": "Новинки"
+		}
+	],
+	"config": {
+		"allowsBaseUrlSelect": true,
+		"supportsTagSearch": true,
+		"hidesFiltersWhileSearching": false,
+		"maximumParallelRequests": 4
+	}
+}
