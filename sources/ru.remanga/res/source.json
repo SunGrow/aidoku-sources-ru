@@ -1,0 +1,48 @@
+{
+	"info": {
+		"id": "ru.remanga",
+		"name": "Remanga",
+		"altNames": [
+			"Реманга",
+			"ReManga"
+		],
+		"version": 1,
+		"urls": [
+			"https://xn--80aaig9ahr.xn--c1avg",
+			"https://remanga.org"
+		],
+		"contentRating": 1,
+		"languages": [
+			"ru"
+		],
+		"minAppVersion": "0.9.0"
+	},
+	"listings": [
+		{
+			"id": "popular",
+			"name": "Популярное"
+		},
+		{
+			"id": "latest",
+			"name": "Обновления"
+		},
+		{
+			"id": "rating",
+			"name": "Лучшее по оценке"
+		},
+		{
+			"id": "views",
+			"name": "Самое читаемое"
+		},
+		{
+			"id": "new",
+			"name": "Новинки"
+		}
+	],
+	"config": {
+		"allowsBaseUrlSelect": true,
+		"supportsTagSearch": true,
+		"hidesFiltersWhileSearching": true,
+		"maximumParallelRequests": 4
+	}
+}

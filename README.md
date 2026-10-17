@@ -12,10 +12,7 @@ from the Browse tab:
 https://sungrow.github.io/aidoku-sources-ru/index.min.json
 ```
 
-Aidoku 0.7.1 or newer is required, except Com-X, which needs 0.9.0 — it
-relies on the web view API to get past the site's JavaScript challenge.
-
-All three need Aidoku 0.9.0 or newer.
+All four sources need Aidoku 0.9.0 or newer.
 
 ## Sources
 
@@ -24,6 +21,7 @@ All three need Aidoku 0.9.0 or newer.
 | WaManga | [wamanga.ru](https://wamanga.ru) | username + password | JSON API. Search, filters (type, status, genre, year), listings, home page, deep links. |
 | AComics | [acomics.ru](https://acomics.ru) | web sign-in | Webcomics. Each strip is a single-page chapter. Search, genre/rating filters, listings, home page, deep links. |
 | Com-X | [com-x.life](https://com-x.life) | web sign-in | Comics, manga, manhwa and manhua. Search, sorting, filters (section, genre, type, status, year, author, artist), listings, home page, deep links. |
+| Remanga | [remanga.org](https://remanga.org) | — | JSON API. Search, sorting, filters (type, genre, category, status, translation status, age rating, year, rating, chapter count), listings, home page, similar titles, deep links. Served over the site's mirror. |
 
 ### Browsing
 
@@ -36,7 +34,11 @@ Com-X carries far more comics than manga, so its listings cover both:
 **Комиксы** unions every western publisher section, with **Marvel** and
 **DC** split out, alongside **Манга**, **Манхва** and **Маньхуа**.
 
-Two of the three offer recommendations, as a listing and a home row:
+Remanga has genre chips too, and its catalog is the most finely filtered
+of the four: genres and categories can each be both required and excluded,
+and the year, rating and chapter count are ranges.
+
+Recommendations differ by site:
 
 - **WaManga** has a recommendations API. Signed in, **Рекомендации** is
   built from your own reading (`/recommendations/for-you`); signed out it
@@ -51,10 +53,16 @@ Two of the three offer recommendations, as a listing and a home row:
   the only occurrence of «рекомендую» on one is the share button's text.
   Nothing was added there rather than passing something else off as a
   recommendation.
+- **Remanga** has no public recommendations listing — the one it does
+  have, `/api/v2/users/my-recommendations/`, is personal and needs a
+  token. What it has instead is per-title: a ranked **Похожее** list,
+  which is appended to the description. For a long run that list leads
+  with the rest of the run, so it doubles as the volume navigation the
+  entries themselves lack.
 
 ### Accounts
 
-All three sources work fully signed out — logging in is optional and only affects
+All four sources work fully signed out — logging in is optional and only affects
 what your account sees on the site itself (bookmarks, subscriptions, personal
 recommendations). Sign in from the source's settings page in Aidoku.
 
@@ -82,6 +90,15 @@ recommendations). Sign in from the source's settings page in Aidoku.
   challenge cannot sign the reader back out. Earlier versions dropped the
   login cookies entirely and sent only the grant, which made a sign-in that
   plainly succeeded in the web view look as though it had never happened.
+- **Remanga** has no sign-in here. The site authenticates with a bearer
+  token rather than a cookie — `/api/v2/users/current/` answers
+  `WWW-Authenticate: Bearer realm="api"` — so the web-view flow the other
+  two use does not apply, and the token lives where a cookie jar cannot
+  reach it. The username-and-password flow it would need instead goes
+  through `/api/v2/users/login/`, which has a two-factor step beside it
+  (`login/2fa/issue`, `login/2fa/verify`). None of that can be exercised
+  without an account, so rather than ship a login that silently fails it
+  was left out. Everything the source does works signed out.
 
 ### Sites not implemented yet
 
@@ -90,15 +107,15 @@ was observed from a connection egressing outside Russia, so some are
 plausibly geo- or IP-based and may behave differently from a Russian network — if a site
 loads normally for you, it is worth retrying.
 
-Adding a login does not unblock any of them. Remanga, MangaLib and the Grouple
-sites are all fronted by DDoS-Guard, which rejects the request at the edge:
+Adding a login does not unblock any of them. MangaLib and the Grouple
+sites are fronted by DDoS-Guard, which rejects the request at the edge:
 `api.cdnlibs.org` answers `403` from `Server: ddos-guard` even for its own
 `/api/auth/login` endpoint, so there is no way to authenticate past it.
 
 | Site | What happens |
 |---|---|
 | readmanga / selfmanga / seimanga | Catalog HTML loads, but DDoS-Guard serves decoy images to untrusted clients: image requests return 77 bytes containing an unrelated Wikipedia URL rather than the page. Needs decoy detection plus mirror fallback. |
-| remanga.org, mangalib.me | HTTP 403 on both the site and the API. |
+| mangalib.me | HTTP 403 on both the site and the API. |
 | desu.me | Host unreachable. |
 
 Implementing a source against markup that cannot be observed means guessing
@@ -116,14 +133,25 @@ setting, and the source API has no sync trait or manifest field at all.
 What a source does decide is whether the synced rows still resolve on the
 other device. The library, chapter and history records are keyed on the
 source id together with the manga and chapter keys, so those keys have to
-mean the same thing everywhere and not drift between versions. All three
+mean the same thing everywhere and not drift between versions. All four
 sources here derive them from the site's own identifiers — WaManga from the
 API's ids, AComics from the permanent `~slug`, Com-X from the numeric id
-the URL carries — with no device, session or host state mixed in.
+the URL carries, Remanga from the title's `dir` — with no device, session
+or host state mixed in.
 
 Com-X titles get renamed, which changes the slug in their URL, but the key
 survives it: the site resolves a title by the numeric prefix and redirects
 to the current address, so a stale key still opens the right entry.
+
+Remanga is the one that needed work. Its keys are slugs with no id-based
+lookup behind them — `/api/v2/titles/38753/` is a 404 — and a title that
+gets licensed has its slug rewritten with a dated marker, so
+`omniscient-reader_` becomes `<29.04.2026>omniscient-reader_` and the old
+form answers 404. Every library entry saved before that rename, on any
+device, would be dead. Because the rewrite only prefixes the existing
+slug, the source recovers from it: a title that no longer resolves is
+searched for by its stored name and matched on a slug ending with the
+stored one, which picks the renamed title and not its doujinshi.
 
 ## Building
 
@@ -294,3 +322,68 @@ endpoints actually return:
   two paths share no common form, so the poster cannot be derived from the
   thumbnail: entries show the thumbnail until details are loaded, which is
   what swaps in the larger one.
+
+- **Remanga** has two generations of its API answering side by side, and only
+  the newer one is correct. The source uses `/api/v2/...` throughout, which is
+  what the site's own pages call. The older `/api/search/catalog/` still
+  responds, but it drops every row the moment a status is named — `status=2`
+  returns zero items even though titles plainly carry that status, and every
+  other value does the same — and it unions repeated genres where the site
+  intersects them. Neither failure reports itself, so an implementation built
+  against it looks like it works until someone opens the filter sheet.
+
+  The main domain is geo-blocked: `remanga.org` answers 403 outside the CIS,
+  while the punycode form of `реманга.орг` serves the full API to a bare
+  request with no headers, cookies or token. That mirror is therefore the
+  default, with the main domain offered beside it through the app's base-url
+  picker, so a connection that prefers the other one needs no new build.
+
+  Filters are repeated parameters with no brackets — `genres=3` twice, never
+  `genres[]=3`, which is accepted and then ignored. What repeating one means
+  is not uniform, and the filter sheet is built to match what each actually
+  does:
+
+  | Parameter | Repeated |
+  |---|---|
+  | `genres`, `categories` | intersect, so the sheet offers them as multi-select |
+  | `types` | union |
+  | `exclude_genres`, `exclude_categories`, `exclude_types` | all are excluded |
+  | `status`, `translate_status`, `age_limit` | only the last value counts, so these are single-choice selects |
+
+  Ranges are a `_gte`/`_lte` suffix on `issue_year`, `rating` and
+  `count_chapters`. The double-underscore spelling Django uses internally is
+  ignored, as is a bare `issue_year=2020`.
+
+  Search and filtering are separate endpoints that ignore each other's
+  parameters: `/api/v2/search/?query=` takes no filters, and the catalog
+  ignores `query` outright rather than erroring. The manifest hides the filter
+  sheet while a query is active so the two never appear to combine. They page
+  differently too — the catalog returns a `next` cursor, search a
+  `total_pages` count.
+
+  The two page-size caps differ, and only one of them complains. Catalog and
+  search reject `count` above 30 with a validation error; the chapter endpoint
+  silently clamps to 50, so asking for 1000 quietly yields 50.
+
+  Chapters hang off a *branch* — one translation team's run — rather than the
+  title, so a branch has to be chosen before they can be listed at all. Nearly
+  every title has exactly one; where there are several they are rival
+  translations of the same work, so the fullest is taken. They arrive newest
+  first, which is the order Aidoku wants, and are walked to the end through
+  the cursor.
+
+  Chapter pages are a list of *slides*, each holding several images, rather
+  than a flat list, so `pages` is flattened before it means anything. Page
+  images are served absolute from a separate host and, unlike Com-X, need no
+  `Referer`: covers and pages both load from a request carrying no headers.
+
+  Creator roles are unlabelled integers with no vocabulary endpoint to resolve
+  them, so they were read off titles whose credits are known independently —
+  on *The Breaker* the writer is type 1 and the artist type 4. Sampling the
+  rest showed type 2 to be art studios and type 3 to be publishers and
+  platforms rather than people, so only 1, 2 and 4 become authors and artists.
+
+  Catalog rows carry none of the fields a content rating comes from, so a
+  listing yields `Unknown` rather than a guessed `Safe`; the real value
+  arrives with the details.
+
