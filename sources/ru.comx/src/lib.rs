@@ -477,58 +477,41 @@ fn is_cyrillic(c: char) -> bool {
 	matches!(c, '\u{0400}'..='\u{04FF}')
 }
 
-/// Reads one of the `<li>Год: 2026</li>` rows from a detail page.
+/// Reads the `<li>Год: 2021</li>` rows of a detail page, all in one pass.
 ///
-/// The list is a `<ul class="page__list">`, so the obvious `div.page__list`
-/// matches nothing at all. It silently read as a page that simply had no
-/// rows, which left every title without an author, an artist or a status.
-fn labelled_value(html: &Document, label: &str) -> Option<String> {
-	let rows = html.select(".page__list li")?;
-	for row in rows {
-		let text = row.text()?;
-		let trimmed = text.trim();
-		if let Some(rest) = trimmed.strip_prefix(label) {
-			let value = rest.trim().to_string();
-			if !value.is_empty() {
-				return Some(value);
-			}
-		}
-	}
-	None
-}
-
-/// The titles the site lists under «Связанное» on a comic's page, which in
-/// practice are the other volumes of the same run.
-///
-/// Aidoku's `Manga` has no field for related titles, so there is nowhere to
-/// put these but the description. Without them a long run is a row of
-/// near-identically named entries with nothing to say which volume follows
-/// which. The panel is comics-only; manga pages carry no such section.
-fn related_titles(html: &Document) -> Vec<String> {
-	// The second panel, «С этим читают», is a recommendation strip rather
-	// than part of the run, so only the open one is read.
-	let Some(posters) = html.select("div.page__related-panel.is-active a.poster") else {
+/// The list is a `<ul class="page__list">`, so the `div.page__list` this
+/// once looked for matched nothing, which left every title without an
+/// author, an artist or a status. Reading every row once and handing back
+/// the pairs costs the document one query rather than one per label.
+fn labelled_rows(html: &Document) -> Vec<(String, String)> {
+	let Some(rows) = html.select("ul.page__list li") else {
 		return Vec::new();
 	};
 
-	let mut titles: Vec<String> = Vec::new();
-	for poster in posters {
-		// The card's own text begins with its rating, so the title element is
-		// read directly, with the cover's alt text as a fallback.
-		let Some(raw) = poster
-			.select_first("p.poster__title")
-			.and_then(|title| title.text())
-			.or_else(|| poster.select_first("img").and_then(|img| img.attr("alt")))
-		else {
+	let mut out: Vec<(String, String)> = Vec::new();
+	for row in rows {
+		// A row that will not give up its text is skipped rather than
+		// ending the scan, which used to hide every row behind it.
+		let Some(text) = row.text() else {
 			continue;
 		};
-
-		let title = primary_title(raw.trim());
-		if !title.is_empty() && !titles.contains(&title) {
-			titles.push(title);
+		let Some((label, value)) = text.trim().split_once(':') else {
+			continue;
+		};
+		let (label, value) = (label.trim(), value.trim());
+		if !label.is_empty() && !value.is_empty() {
+			out.push((label.into(), value.into()));
 		}
 	}
-	titles
+	out
+}
+
+/// The value of one labelled row, by the label's own spelling without its
+/// trailing colon.
+fn labelled_value<'a>(rows: &'a [(String, String)], label: &str) -> Option<&'a str> {
+	rows.iter()
+		.find(|(name, _)| name == label)
+		.map(|(_, value)| value.as_str())
 }
 
 /// Parses the cards shared by the catalog and the search results.
@@ -729,35 +712,18 @@ impl Source for ComX {
 				.select_first("div.page__text.full-text.clearfix")
 				.and_then(|text| text.text());
 
-			// Each volume of a run is its own title here, and the entry itself
-			// says nothing about the ones around it. Appending them is the only
-			// way to show them at all, since there is no field for them.
-			let related = related_titles(&html);
-			if !related.is_empty() {
-				let mut note = String::from("Связанное: ");
-				for (index, title) in related.iter().enumerate() {
-					if index > 0 {
-						note.push_str(" · ");
-					}
-					note.push_str(title);
-				}
+			let rows = labelled_rows(&html);
 
-				manga.description = Some(match manga.description.take() {
-					Some(text) if !text.trim().is_empty() => format!("{text}\n\n{note}"),
-					_ => note,
-				});
+			if let Some(author) = labelled_value(&rows, "Автор") {
+				manga.authors = Some(Vec::from([String::from(author)]));
 			}
-
-			if let Some(author) = labelled_value(&html, "Автор:") {
-				manga.authors = Some(Vec::from([author]));
-			}
-			if let Some(artist) = labelled_value(&html, "Художник:") {
-				manga.artists = Some(Vec::from([artist]));
+			if let Some(artist) = labelled_value(&rows, "Художник") {
+				manga.artists = Some(Vec::from([String::from(artist)]));
 			}
 
 			// `Завершен, перевод продолжается` has to be tested before the
 			// plain completed label, which is a prefix of it.
-			manga.status = match labelled_value(&html, "Статус:").as_deref() {
+			manga.status = match labelled_value(&rows, "Статус") {
 				Some(status) if status.starts_with("Завершен, перевод") => MangaStatus::Ongoing,
 				Some("Завершён") | Some("Завершен") => MangaStatus::Completed,
 				Some("Заморожен") | Some("Приостановлен") => MangaStatus::Hiatus,
@@ -765,19 +731,23 @@ impl Source for ComX {
 				_ => MangaStatus::Unknown,
 			};
 
-			if manga.status == MangaStatus::Completed {
-				manga.update_strategy = UpdateStrategy::Never;
-			}
+			// A completed comic is deliberately NOT marked
+			// `UpdateStrategy::Never` here. The line existed before this
+			// source could read a status at all, so it never once ran; v7
+			// made the status readable and thereby switched it on for most
+			// comics, which is the one change in that version that altered
+			// how the app treats an entry rather than what it displays. It
+			// stays off until there is a reason to believe it is harmless.
 
 			// The year and the publisher come first. A long run is filed as one
 			// title per volume under near-identical names, and these are what
 			// tell a 1963 run from a 2018 one at a glance.
 			let mut tags: Vec<String> = Vec::new();
-			if let Some(year) = labelled_value(&html, "Год:") {
-				tags.push(year);
+			if let Some(year) = labelled_value(&rows, "Год") {
+				tags.push(String::from(year));
 			}
-			if let Some(publisher) = labelled_value(&html, "Издатель:") {
-				tags.push(publisher);
+			if let Some(publisher) = labelled_value(&rows, "Издатель") {
+				tags.push(String::from(publisher));
 			}
 
 			// Genres are the catalog links carrying a `g=` segment. The same

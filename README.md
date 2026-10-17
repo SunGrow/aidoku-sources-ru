@@ -350,22 +350,23 @@ endpoints actually return:
   plain HTTP — but it only yields chapter ids and titles, with no catalog,
   detail or page images, so it is not enough to build on.
 
-  Each volume of a run is its own title, with near-identical names and
-  nothing in the entry to say which volume follows which. The site keeps
-  that in a «Связанное» panel on comics pages — manga pages have no such
-  section — beside a «С этим читают» panel, which is a recommendation
-  strip rather than part of the run, so only the open panel is read.
-  Aidoku's `Manga` has no field for related titles, so they are appended
-  to the description. That is the only place they can be shown at all.
-
-  For the same reason the year and the publisher are put at the front of
-  the tag list: they are what distinguishes a 1963 run from a 2018 one
-  when both are called «Amazing Spider-Man».
+  The year and the publisher are put at the front of the tag list: each
+  volume of a run is its own title under a near-identical name, and those
+  two are what distinguish a 1963 run from a 2018 one when both are called
+  «Amazing Spider-Man».
 
   Those rows sit in a `<ul class="page__list">`. The source looked for
   them under `div.page__list`, which matches nothing and read as a page
   with no rows rather than as an error, so every title went without an
-  author, an artist or a status until this was corrected.
+  author, an artist or a status until this was corrected. All of the rows
+  are now read in a single pass rather than one document query per label.
+
+  Version 7 also claimed to list the rest of a run from a «Связанное»
+  panel. There is no such panel: `page__related` appears nowhere in the
+  HTML the site serves, checked on six pages, four of them comics. The
+  selector was written from an assumption rather than from the markup, so
+  it never matched and the feature never did anything. It is gone, and
+  Aidoku still has no field for related titles.
 
   The challenge also re-triggers after bursts of requests, which is why the
   source caps parallel requests at two.
