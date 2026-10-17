@@ -102,21 +102,59 @@ recommendations). Sign in from the source's settings page in Aidoku.
 
 ### Sites not implemented yet
 
-These were attempted and are blocked by anti-bot measures. Every result below
-was observed from a connection egressing outside Russia, so some are
-plausibly geo- or IP-based and may behave differently from a Russian network — if a site
-loads normally for you, it is worth retrying.
+Every result below was observed from a connection egressing outside Russia.
 
-Adding a login does not unblock any of them. MangaLib and the Grouple
-sites are fronted by DDoS-Guard, which rejects the request at the edge:
-`api.cdnlibs.org` answers `403` from `Server: ddos-guard` even for its own
-`/api/auth/login` endpoint, so there is no way to authenticate past it.
+Two of these turned out not to be blocked at all, only asked for differently.
+The earlier conclusion here — that DDoS-Guard rejected MangaLib and the
+Grouple sites at the edge, with no way past it — was wrong, and wrong in a
+way worth recording: a bare `curl` was treated as the whole story. Loading
+the same sites in a browser and reading what their own pages requested
+showed both answering normally.
 
-| Site | What happens |
-|---|---|
-| readmanga / selfmanga / seimanga | Catalog HTML loads, but DDoS-Guard serves decoy images to untrusted clients: image requests return 77 bytes containing an unrelated Wikipedia URL rather than the page. Needs decoy detection plus mirror fallback. |
-| mangalib.me | HTTP 403 on both the site and the API. |
-| desu.me | Host unreachable. |
+| Site | State | What happens |
+|---|---|---|
+| MangaLib | reachable, not yet built | `mangalib.me` is geo-blocked, but `mangalib.org` serves the same library and its API answers in full. See below. |
+| Grouple family | partly reachable | The old domains are dead ends; the network now lives at `a.zazaza.me`. HTML is reachable, page images are not. See below. |
+| desu.me | gone | Not blocked — the domain publishes no address at all. See below. |
+
+**MangaLib.** `mangalib.me` answers 403, but the body is DDoS-Guard's
+`geoblocked.js` page rather than a bot challenge, exactly as `remanga.org`
+does. `mangalib.org` serves the same library and loads normally. Its pages
+call `api.cdnlibs.org`, which answers 403 to a bare request — but only
+because the request carries no `Referer`. A single
+`Referer: https://mangalib.org/` turns the same URL into a 200 with the full
+JSON catalogue, and the title endpoint wants a `Site-Id: 1` header beside it.
+Covers on `cover.cdnlibs.org` and pages on `img*.imglib.info` need the same
+`Referer`, which is the Com-X situation and the same fix. Catalogue, search,
+details, chapters, pages and the filter vocabulary were all confirmed
+against the live API, so this one is ready to build.
+
+**The Grouple family.** `readmanga`, `mintmanga`, `selfmanga`, `seimanga` and
+`usagi.one` all answer `402 Payment Required` with a 24-byte
+`NOT FOUND IN THE ADDRESS` body, which reads like a hard block but is only
+their reply to a non-browser user agent. With a browser one, `readmanga.live`
+answers `301` to `https://a.zazaza.me/` — the network has moved, and the old
+domains are forwarders rather than the site. ZazaZa runs the same engine:
+`/list?sortType=…` pages the catalogue, a title page carries its chapters as
+`/{slug}/vol{N}/{M}`, `/search/suggestion?query=` answers JSON, and the
+reader still embeds its pages in a `readerInit(chapterInfo, [[host, '',
+path, w, h], …])` array. A browser user agent alone is enough for all of it.
+
+What still blocks a source is the images. Page URLs are signed with a
+timestamp and hash, and requesting one returns `300` with a 77-byte body
+holding a link to an unrelated Wikipedia photograph instead of the page. The
+signature had not expired, a shared cookie jar made no difference, and the
+other hosts the reader names serve different pages rather than mirroring the
+same path, so there is no fallback to fail over to. Everything except the
+images is in reach; until they are, the source would open a chapter onto
+pumpkins.
+
+**desu.me.** This one is not blocked and not moved. The domain is delegated
+to Cloudflare's nameservers but publishes no `A`, `AAAA` or `CNAME` record at
+all, so there is nothing to connect to. The similarly named domains are not
+it either: `desu.win` and `desu.city` are parked and bounce through an
+advertising redirect, and `desu.su` is openly for sale. Nothing to implement
+against.
 
 Implementing a source against markup that cannot be observed means guessing
 selectors, and that guess is usually wrong: WaManga and AComics both needed
