@@ -12,7 +12,7 @@ from the Browse tab:
 https://sungrow.github.io/aidoku-sources-ru/index.min.json
 ```
 
-All four sources need Aidoku 0.9.0 or newer.
+All five sources need Aidoku 0.9.0 or newer.
 
 ## Sources
 
@@ -22,6 +22,7 @@ All four sources need Aidoku 0.9.0 or newer.
 | AComics | [acomics.ru](https://acomics.ru) | web sign-in | Webcomics. Each strip is a single-page chapter. Search, genre/rating filters, listings, home page, deep links. |
 | Com-X | [com-x.life](https://com-x.life) | web sign-in | Comics, manga, manhwa and manhua. Search, sorting, filters (section, genre, type, status, year, author, artist), listings, home page, deep links. |
 | Remanga | [remanga.org](https://remanga.org) | — | JSON API. Search, sorting, filters (type, genre, category, status, translation status, age rating, year, rating, chapter count), listings, home page, similar titles, deep links. Served over the site's mirror. |
+| MangaLib | [mangalib.org](https://mangalib.org) | — | JSON API. Search combined with filters (type, status, translation status, format, genre, tag, year, rating, chapter count), listings, home page, related and similar titles, rival translations as separate chapters, deep links. |
 
 ### Browsing
 
@@ -35,8 +36,15 @@ Com-X carries far more comics than manga, so its listings cover both:
 **DC** split out, alongside **Манга**, **Манхва** and **Маньхуа**.
 
 Remanga has genre chips too, and its catalog is the most finely filtered
-of the four: genres and categories can each be both required and excluded,
+of the five: genres and categories can each be both required and excluded,
 and the year, rating and chapter count are ranges.
+
+MangaLib has genre chips as well, and is the one source where a search and
+the filter sheet combine: typing a query narrows the filtered set rather
+than replacing it, so the sheet stays on screen while searching. It is also
+the only one that lists rival translations side by side — a chapter
+translated by three teams appears three times, each labelled with its team,
+and opening one reads that team's pages.
 
 Recommendations differ by site:
 
@@ -59,10 +67,15 @@ Recommendations differ by site:
   which is appended to the description. For a long run that list leads
   with the rest of the run, so it doubles as the volume navigation the
   entries themselves lack.
+- **MangaLib** has two per-title lists rather than a recommendations
+  listing, and both are appended to the description. `/relations` is the
+  one that answers what a long run raises — it names the sequel, the
+  prequel, the colour version and the spin-offs, each with its relation
+  spelled out — and `/similar` is the looser "readers also read" list.
 
 ### Accounts
 
-All four sources work fully signed out — logging in is optional and only affects
+All five sources work fully signed out — logging in is optional and only affects
 what your account sees on the site itself (bookmarks, subscriptions, personal
 recommendations). Sign in from the source's settings page in Aidoku.
 
@@ -99,35 +112,29 @@ recommendations). Sign in from the source's settings page in Aidoku.
   (`login/2fa/issue`, `login/2fa/verify`). None of that can be exercised
   without an account, so rather than ship a login that silently fails it
   was left out. Everything the source does works signed out.
+- **MangaLib** has no sign-in here either. Everything this source touches —
+  catalogue, search, filters, details, chapters and pages — answers in full
+  to an unauthenticated request, and what an account adds (bookmarks,
+  reading history, personal recommendations) is not used. How the site
+  authenticates was not established: `/auth/me` redirects rather than
+  challenging, and the front end is a shell that reveals nothing, so there
+  was no mechanism to implement against and no account to test one with.
 
 ### Sites not implemented yet
 
 Every result below was observed from a connection egressing outside Russia.
 
-Two of these turned out not to be blocked at all, only asked for differently.
-The earlier conclusion here — that DDoS-Guard rejected MangaLib and the
-Grouple sites at the edge, with no way past it — was wrong, and wrong in a
-way worth recording: a bare `curl` was treated as the whole story. Loading
-the same sites in a browser and reading what their own pages requested
-showed both answering normally.
+This section once said DDoS-Guard rejected MangaLib and the Grouple sites
+at the edge, with no way past it. That was wrong, and wrong in a way worth
+recording: a bare `curl` was treated as the whole story. Loading the same
+sites in a browser and reading what their own pages requested showed both
+answering normally. MangaLib became a source on the strength of that; what
+is left below is a narrower problem than a block.
 
 | Site | State | What happens |
 |---|---|---|
-| MangaLib | reachable, not yet built | `mangalib.me` is geo-blocked, but `mangalib.org` serves the same library and its API answers in full. See below. |
 | Grouple family | partly reachable | The old domains are dead ends; the network now lives at `a.zazaza.me`. HTML is reachable, page images are not. See below. |
 | desu.me | gone | Not blocked — the domain publishes no address at all. See below. |
-
-**MangaLib.** `mangalib.me` answers 403, but the body is DDoS-Guard's
-`geoblocked.js` page rather than a bot challenge, exactly as `remanga.org`
-does. `mangalib.org` serves the same library and loads normally. Its pages
-call `api.cdnlibs.org`, which answers 403 to a bare request — but only
-because the request carries no `Referer`. A single
-`Referer: https://mangalib.org/` turns the same URL into a 200 with the full
-JSON catalogue, and the title endpoint wants a `Site-Id: 1` header beside it.
-Covers on `cover.cdnlibs.org` and pages on `img*.imglib.info` need the same
-`Referer`, which is the Com-X situation and the same fix. Catalogue, search,
-details, chapters, pages and the filter vocabulary were all confirmed
-against the live API, so this one is ready to build.
 
 **The Grouple family.** `readmanga`, `mintmanga`, `selfmanga`, `seimanga` and
 `usagi.one` all answer `402 Payment Required` with a 24-byte
@@ -171,7 +178,7 @@ setting, and the source API has no sync trait or manifest field at all.
 What a source does decide is whether the synced rows still resolve on the
 other device. The library, chapter and history records are keyed on the
 source id together with the manga and chapter keys, so those keys have to
-mean the same thing everywhere and not drift between versions. All four
+mean the same thing everywhere and not drift between versions. All five
 sources here derive them from the site's own identifiers — WaManga from the
 API's ids, AComics from the permanent `~slug`, Com-X from the numeric id
 the URL carries, Remanga from the title's `dir` — with no device, session
@@ -425,3 +432,54 @@ endpoints actually return:
   listing yields `Unknown` rather than a guessed `Safe`; the real value
   arrives with the details.
 
+- **MangaLib** (`mangalib.org`; `mangalib.me` answers 403 with DDoS-Guard's
+  geoblock page) serves its pages from one host and its data from another,
+  `api.cdnlibs.org`. That API answers 403 to a request carrying no
+  `Referer`, and the details endpoint answers 404 with a silent "Not Found"
+  toast to one carrying no `Site-Id: 1`, so both headers are on every
+  request. Covers on `cover.cdnlibs.org` need the `Referer` too, which is
+  the Com-X situation and the same fix.
+
+  The same API serves four sibling libraries — manga is site 1, ranobe 3,
+  and two adult ones are 2 and 4 — told apart by `site_id[]`. Every entry
+  in the filter vocabulary carries the `site_ids` it belongs to, so the
+  sheet is built from the entries containing 1 and never offers a tag that
+  cannot match. The vocabulary is inconsistent about how it labels itself:
+  types, statuses and translation statuses use `label`, while genres, tags
+  and formats use `name`.
+
+  Several filter parameters are accepted and then silently ignored rather
+  than rejected, which makes them worse than an error: `exclude_genres`,
+  `genres_exclusion`, `types_exclude` and `status_exclude` all return the
+  unfiltered catalogue, as does every spelling of an age filter that was
+  tried (`caution`, `age_restriction`, `ageRestriction`, `caution_id`,
+  `restriction`, `age_restriction_id`, `cautions`, each as both an array
+  and a scalar). Only parameters checked against the rows they returned are
+  shipped, which is why exclusion is offered for genres and tags alone and
+  why there is no age filter at all. Repeating a value does not mean one
+  thing either: `genres` and `tags` intersect, while `types`, `status`,
+  `scanlate_status` and `format` union.
+
+  Search is the same endpoint as the catalogue with a `q` added, so it
+  combines with the filters and the sort instead of replacing them —
+  `hidesFiltersWhileSearching` is off for that reason.
+
+  `summary` is not a string. It is a ProseMirror document, a tree of nodes
+  under `{"type": "doc", "content": [...]}`, which has to be walked and
+  flattened; older entries are still plain strings, so both are accepted.
+
+  Chapters arrive in one response, oldest first, and each row carries one
+  entry per translation. Those are rival translations of the same chapter
+  rather than different parts of it, so each becomes its own chapter with
+  its team named. Pages are addressed by volume and number rather than by
+  chapter id, with `branch_id` picking the translation — the chapter row's
+  own `id` is not interchangeable with it, and `bid` is ignored.
+
+  Page urls come back as host-relative fragments to hang off an image
+  server. `/constants?fields[]=imageServers` names several: the "main" one,
+  `img2.imglib.info`, answers with AVIF whatever `Accept` asks for, while
+  the "compress" and "download" server, `img3.cdnlibs.org`, serves the
+  identical image — same pixel dimensions, same source — as JPEG and
+  without needing a `Referer`. The JPEG host is used, because a format
+  every reader can decode is worth more here than the third off the
+  transfer.

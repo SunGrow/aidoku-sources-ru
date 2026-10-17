@@ -1,0 +1,46 @@
+{
+	"info": {
+		"id": "ru.mangalib",
+		"name": "MangaLib",
+		"altNames": [
+			"МангаЛиб",
+			"Манга Либ"
+		],
+		"version": 1,
+		"urls": [
+			"https://mangalib.org"
+		],
+		"contentRating": 1,
+		"languages": [
+			"ru"
+		],
+		"minAppVersion": "0.9.0"
+	},
+	"listings": [
+		{
+			"id": "popular",
+			"name": "Популярное"
+		},
+		{
+			"id": "latest",
+			"name": "Обновления"
+		},
+		{
+			"id": "views",
+			"name": "Самое читаемое"
+		},
+		{
+			"id": "rating",
+			"name": "Лучшее по оценке"
+		},
+		{
+			"id": "new",
+			"name": "Новинки"
+		}
+	],
+	"config": {
+		"supportsTagSearch": true,
+		"hidesFiltersWhileSearching": false,
+		"maximumParallelRequests": 4
+	}
+}
