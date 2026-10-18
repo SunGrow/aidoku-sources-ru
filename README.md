@@ -345,6 +345,26 @@ endpoints actually return:
   so nothing in the fetch path is allowed to block without a bound: the
   poll is the only wait, and it always ends in a page or an error.
 
+  What the grant expiring looks like, confirmed on a device: a comic's
+  details spin without ever arriving, its chapter list comes up empty, and
+  the home page's covers crawl. The last of those is a consequence rather
+  than a separate fault — the source caps itself at two parallel requests,
+  so a stalled page load starves the image queue behind it. None of it is
+  a parsing fault, and chasing it as one wasted a version: without the
+  grant every request, whatever its user agent and whether or not it
+  follows redirects, lands on the `/_c` gate with a 404 and no payload,
+  while the same request carrying the grant returns the page whole. The
+  gate itself is a proof-of-work — `SHA-256(token + ":" + nonce)` until
+  the hash starts with `00`, posted to `/_v` — and it also reads signals
+  meant to spot automation, which is reason enough to leave it to the web
+  view that runs the site's own script rather than reimplementing it here.
+
+  The grant is refreshed by opening the source's web view sign-in once,
+  which clears the gate in a visible browser and stores the cookies; the
+  plain-HTTP path works again immediately afterwards. Since a background
+  web view cannot be relied on to clear it, the error says that in as many
+  words rather than leaving an empty chapter list to be puzzled over.
+
   One endpoint escapes the challenge — `/engine/ajax/controller.php` with
   `mod=reader&method=reader/chapters&news_id=<id>` returns chapter JSON over
   plain HTTP — but it only yields chapter ids and titles, with no catalog,

@@ -291,7 +291,13 @@ fn solve_challenge(url: &str, marker: &str) -> Result<String> {
 		}
 	}
 
-	bail!("The site's challenge did not complete")
+	// Saying so plainly: a background web view cannot always clear this
+	// gate, and the reader has no way to guess that signing in once
+	// through the web view is what refreshes the grant that unblocks
+	// every plain request after it.
+	bail!(
+		"Com-X did not let this request through. Open the source's web view sign-in once to refresh its cookies, then try again."
+	)
 }
 
 /// Builds a `Cookie` header out of the web view's store, keeping only this
