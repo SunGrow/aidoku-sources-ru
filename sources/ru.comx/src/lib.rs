@@ -49,7 +49,8 @@ const DATE_FORMAT: &str = "dd.MM.yyyy";
 /// single request. Note this is the opposite of the genre filter, which
 /// intersects them.
 const COMIC_SECTIONS: &[&str] = &[
-	"2", "14", "7", "6", "4", "8", "9", "10", "11", "12", "13", "15", "16", "18", "50", "51",
+	"2", "14", "7", "6", "4", "5", "8", "9", "10", "11", "12", "13", "15", "16", "18", "50",
+	"51",
 ];
 
 /// Every section the site files a title under.
@@ -161,13 +162,21 @@ fn stored_login() -> Option<String> {
 
 /// The cookie header a request goes out with.
 ///
-/// The challenge grant and the login are merged here. Where both carry a
-/// cookie of the same name the login's wins: it is the newer of the two and
-/// the one holding the session.
+/// Two jars are merged. The grant is rewritten every time the challenge
+/// is solved, while the login jar is a snapshot taken when the reader
+/// signed in, so on a name they share the grant is the fresher of the two
+/// and wins. Letting the snapshot win, as this did, meant an expired
+/// grant went out on every request for good: each solve stored a new one
+/// and the snapshot covered it straight back up, so the source could
+/// never recover on its own and only signing in again ever fixed it.
+///
+/// The exception is the cookies carrying the sign-in itself. The web view
+/// that solves the challenge need not be signed in, so taking its copy of
+/// those could quietly sign the reader out.
 fn request_cookies() -> Option<String> {
 	let mut merged: Vec<(String, String)> = Vec::new();
 
-	for jar in [stored_cookies(), stored_login()] {
+	for (jar, is_grant) in [(stored_login(), false), (stored_cookies(), true)] {
 		let Some(jar) = jar else {
 			continue;
 		};
@@ -176,7 +185,11 @@ fn request_cookies() -> Option<String> {
 				continue;
 			};
 			match merged.iter_mut().find(|(seen, _)| seen == name) {
-				Some(slot) => slot.1 = String::from(value),
+				Some(slot) => {
+					if !(is_grant && is_session_cookie(name)) {
+						slot.1 = String::from(value);
+					}
+				}
 				None => merged.push((String::from(name), String::from(value))),
 			}
 		}
@@ -196,6 +209,13 @@ fn request_cookies() -> Option<String> {
 		header.push_str(value);
 	}
 	Some(header)
+}
+
+/// Whether a cookie name carries the sign-in rather than the challenge
+/// grant. `PHPSESSID` is the site's session and the `dle_` family is the
+/// engine's own login state; a solve must never overwrite either.
+fn is_session_cookie(name: &str) -> bool {
+	name.eq_ignore_ascii_case("PHPSESSID") || name.starts_with("dle_")
 }
 
 /// Attaches whatever cookies are on hand to a request.
@@ -221,12 +241,27 @@ fn with_cookies(request: Request) -> Request {
 /// once the cookies are warm it is what serves almost every page.
 fn fetch(url: &str, marker: &str) -> Result<String> {
 	if let Ok(body) = with_cookies(Request::get(url)?).string() {
-		if body.contains(marker) {
+		// The marker says this is the page that was asked for. A body that
+		// carries neither the marker nor the interstitial is still a real
+		// answer — a search with no hits, a title that is gone — and asking
+		// the web view about it only bought thirty seconds and an error
+		// blaming the sign-in for an empty result.
+		if !body.is_empty() && (body.contains(marker) || !is_gate(&body)) {
 			return Ok(body);
 		}
 	}
 
 	solve_challenge(url, marker)
+}
+
+/// Whether a body is the challenge's interstitial rather than a page.
+///
+/// Asking instead whether a page carries cards cannot tell an empty
+/// search from a blocked request. The interstitial is recognisable on its
+/// own terms: it posts its proof of work to `/_v` and stands in for the
+/// page named in the url it was handed.
+fn is_gate(body: &str) -> bool {
+	body.contains("\"POST\", \"/_v\"") || body.contains("var targetUrl = decodeURIComponent(")
 }
 
 /// Loads a page in a web view so the challenge script runs, then keeps the
@@ -368,7 +403,7 @@ fn catalog_document(url: &str, body: &str) -> Result<Document> {
 			.body(body)
 			.string()
 			.ok()
-			.filter(|page| page.contains(LIST_MARKER))
+			.filter(|page| !is_gate(page))
 	};
 
 	// Only worth trying while there is something to send: without cookies
@@ -446,14 +481,38 @@ fn parse_embedded<T: DeserializeOwned>(html: &str) -> Result<T> {
 /// Turns `https://com-x.life/34147-priemnaja-doch.html` into
 /// `34147-priemnaja-doch`, which is used as the manga key.
 fn manga_key(href: &str) -> Option<String> {
-	let slug = href.trim_end_matches('/').rsplit('/').next()?;
-	let slug = slug.strip_suffix(".html").unwrap_or(slug);
+	// A shared link can carry either of these, and neither belongs in a
+	// key that is about to have `.html` put back on the end of it.
+	let href = href.split('#').next().unwrap_or(href);
+	let href = href.split('?').next().unwrap_or(href);
+	let last = href.trim_end_matches('/').rsplit('/').next()?;
 
-	// Every entry is prefixed with its numeric id; anything else is a nav link.
+	// A title is a `.html` page. Accepting any segment that merely began
+	// with a digit turned `/ComicList/page/2/` into a manga keyed `2`,
+	// which then fetched a `/2.html` that does not exist.
+	let slug = match last.strip_suffix(".html") {
+		Some(slug) => slug,
+		// Without the extension the segment still has to look like
+		// `<id>-<slug>`; a bare number is pagination, not a title.
+		None => match last.split_once('-') {
+			Some((id, rest))
+				if !id.is_empty()
+				&& !rest.is_empty()
+				&& id.chars().all(|c| c.is_ascii_digit()) =>
+			{
+				last
+			}
+			_ => return None,
+		},
+	};
+
+	// The reader has its own page for a title under the same id.
+	let slug = slug.strip_suffix("-read").unwrap_or(slug);
+
 	if slug.is_empty() || !slug.starts_with(|c: char| c.is_ascii_digit()) {
 		return None;
 	}
-	Some(slug.to_string())
+	Some(String::from(slug))
 }
 
 /// The numeric id leading a manga key, which the reader URL is built from.
@@ -470,13 +529,32 @@ fn news_id(key: &str) -> Option<&str> {
 /// is preferred rather than assuming a fixed order — and titles like
 /// `Spider-Man/Deadpool` mean only ` / ` can be used as the separator.
 fn primary_title(raw: &str) -> String {
-	// `rsplit` rather than `split(..).rev()`: splitting on a string pattern
-	// does not give a double ended iterator.
-	raw.rsplit(" / ")
-		.map(str::trim)
-		.find(|part| part.chars().any(is_cyrillic))
-		.unwrap_or(raw.trim())
-		.to_string()
+	let raw = raw.trim();
+	let parts: Vec<&str> = raw.split(" / ").map(str::trim).collect();
+
+	// The Russian name is the tail of `English name / Русское название`.
+	// Taking only the last Cyrillic part threw away half of a title that
+	// is Cyrillic throughout: «Бэтмен / Супермен» came out as «Супермен».
+	// So the whole run of Cyrillic parts at the end is kept.
+	let start = parts
+		.iter()
+		.rposition(|part| !part.chars().any(is_cyrillic))
+		.map(|index| index + 1)
+		.unwrap_or(0);
+
+	// Nothing Cyrillic anywhere, so there is no Russian name to prefer.
+	if start >= parts.len() {
+		return String::from(raw);
+	}
+
+	let mut title = String::new();
+	for part in &parts[start..] {
+		if !title.is_empty() {
+			title.push_str(" / ");
+		}
+		title.push_str(part);
+	}
+	title
 }
 
 fn is_cyrillic(c: char) -> bool {
@@ -714,9 +792,17 @@ impl Source for ComX {
 				manga.cover = Some(cover);
 			}
 
-			manga.description = html
+			// Assigned only when there is something to assign: writing the
+			// miss straight through cleared a description the entry already
+			// had whenever the block was absent.
+			if let Some(description) = html
 				.select_first("div.page__text.full-text.clearfix")
-				.and_then(|text| text.text());
+				.and_then(|text| text.text())
+				.map(|text| String::from(text.trim()))
+				.filter(|text| !text.is_empty())
+			{
+				manga.description = Some(description);
+			}
 
 			let rows = labelled_rows(&html);
 
@@ -727,11 +813,15 @@ impl Source for ComX {
 				manga.artists = Some(Vec::from([String::from(artist)]));
 			}
 
-			// `Завершен, перевод продолжается` has to be tested before the
+			// The site writes «Завершён» with ё but is not consistent about
+			// it, and matching a single spelling turned the other into
+			// Unknown, so both are folded to е first. The
+			// translation-continues wording has to be tested before the
 			// plain completed label, which is a prefix of it.
-			manga.status = match labelled_value(&rows, "Статус") {
+			let status = labelled_value(&rows, "Статус").map(|value| value.replace('ё', "е"));
+			manga.status = match status.as_deref() {
 				Some(status) if status.starts_with("Завершен, перевод") => MangaStatus::Ongoing,
-				Some("Завершён") | Some("Завершен") => MangaStatus::Completed,
+				Some("Завершен") => MangaStatus::Completed,
 				Some("Заморожен") | Some("Приостановлен") => MangaStatus::Hiatus,
 				Some("Продолжается") => MangaStatus::Ongoing,
 				_ => MangaStatus::Unknown,
@@ -997,7 +1087,15 @@ impl ImageRequestProvider for ComX {
 
 impl DeepLinkHandler for ComX {
 	fn handle_deep_link(&self, url: String) -> Result<Option<DeepLinkResult>> {
-		let Some(path) = url.strip_prefix(BASE_URL) else {
+		// A shared link arrives over either scheme and with or without
+		// `www.`; only the canonical spelling used to be recognised, so
+		// every other form opened nothing at all.
+		let rest = url
+			.strip_prefix("https://")
+			.or_else(|| url.strip_prefix("http://"))
+			.unwrap_or(url.as_str());
+		let rest = rest.strip_prefix("www.").unwrap_or(rest);
+		let Some(path) = rest.strip_prefix("com-x.life") else {
 			return Ok(None);
 		};
 		let path = path.trim_start_matches('/');
@@ -1042,20 +1140,26 @@ fn embedded_string(html: &str, field: &str) -> Option<String> {
 
 impl WebLoginHandler for ComX {
 	fn handle_web_login(&self, _key: String, cookies: HashMap<String, String>) -> Result<bool> {
-		// These cookies are the whole point of the exercise. Dropping them
-		// leaves the source requesting every page as a guest, which is what
-		// makes a login that plainly succeeded in the web view look as though
-		// it never happened.
-		if !cookies.is_empty() {
-			let mut header = String::new();
-			for (name, value) in cookies.iter() {
-				if !header.is_empty() {
-					header.push_str("; ");
-				}
-				header.push_str(name);
-				header.push('=');
-				header.push_str(value);
+		let mut header = String::new();
+		for (name, value) in cookies.iter() {
+			if !header.is_empty() {
+				header.push_str("; ");
 			}
+			header.push_str(name);
+			header.push('=');
+			header.push_str(value);
+		}
+
+		if !header.is_empty() {
+			// Whatever the reader opened this sheet to do, it is a visible web
+			// view that has just cleared the challenge, so its cookies are the
+			// freshest grant the source is going to get. Storing them as the
+			// grant as well is what makes the advice in the fetch error true:
+			// opening this sheet refreshes the grant even if nobody signs in.
+			defaults_set(COOKIE_KEY, DefaultValue::String(header.clone()));
+			// These are the whole point of the exercise. Dropping them leaves
+			// the source requesting every page as a guest, which is what makes
+			// a login that plainly succeeded look as though it never happened.
 			defaults_set(LOGIN_COOKIE_KEY, DefaultValue::String(header));
 		}
 
@@ -1065,12 +1169,18 @@ impl WebLoginHandler for ComX {
 		// so it is answered with the cookies just stored and reports what the
 		// source will actually get from here on rather than what the web view
 		// alone can see.
-		let body = fetch(&format!("{BASE_URL}/ComicList/"), LIST_MARKER)?;
+		let Ok(body) = fetch(&format!("{BASE_URL}/ComicList/"), LIST_MARKER) else {
+			// The question could not be put. The cookies above are already
+			// stored, and throwing them away over one failed request would
+			// undo a sign-in that may well have worked.
+			return Ok(false);
+		};
 		let logged_in = body.contains("\"is_logged\":true");
 
-		// Not logged in means either that the login did not take or that this
+		// Not signed in means either that the login did not take or that this
 		// call is a logout; which of the two it is cannot be told apart here,
-		// and in both cases the stored cookies are not worth sending again.
+		// and in both cases the login cookies are not worth sending again.
+		// The grant stored above is, so it stays.
 		if !logged_in {
 			defaults_set(LOGIN_COOKIE_KEY, DefaultValue::String(String::new()));
 		}

@@ -38,8 +38,7 @@ Com-X carries far more comics than manga, so its listings cover both:
 **Комиксы** unions every western publisher section, with **Marvel** and
 **DC** split out, alongside **Манга**, **Манхва** and **Маньхуа**.
 
-Remanga has genre chips too, and its catalog is the most finely filtered
-of the five: genres and categories can each be both required and excluded,
+Remanga has genre chips too, and its catalog is finely filtered: genres and categories can each be both required and excluded,
 and the year, rating and chapter count are ranges.
 
 MangaLib has genre chips as well, and is the one source where a search and
@@ -97,7 +96,7 @@ Recommendations differ by site:
 
 ### Accounts
 
-All six sources work fully signed out — logging in is optional and only affects
+Every source here works fully signed out — logging in is optional and only affects
 what your account sees on the site itself (bookmarks, subscriptions, personal
 recommendations). Sign in from the source's settings page in Aidoku.
 
@@ -120,11 +119,23 @@ recommendations). Sign in from the source's settings page in Aidoku.
   cookie name.
 
   Com-X keeps the cookies the web view hands back and merges them with the
-  challenge grant on every request, the login's winning where both carry a
-  cookie of the same name. The two are stored apart so that re-solving the
-  challenge cannot sign the reader back out. Earlier versions dropped the
-  login cookies entirely and sent only the grant, which made a sign-in that
-  plainly succeeded in the web view look as though it had never happened.
+  challenge grant on every request. Where both carry a cookie of the same
+  name the grant wins, because it is rewritten every time the challenge is
+  solved while the login jar is a snapshot from the moment of signing in.
+  Letting the snapshot win, which is what this did until v10, meant an
+  expired grant was sent again on every request for good: each solve stored
+  a fresh one and the snapshot covered it straight back up, so the source
+  could not recover on its own and only signing in again ever fixed it.
+  The exception is the cookies that carry the sign-in — `PHPSESSID` and the
+  engine's `dle_` family — which are always taken from the login jar, since
+  the web view that solves the challenge need not be signed in and its copy
+  of those would quietly sign the reader out. Which cookie actually is the
+  grant was never confirmed, so the rule is written the other way round:
+  everything that is not a known sign-in cookie is treated as refreshable.
+  The two jars are stored apart for the same reason. Earlier versions
+  dropped the login cookies entirely and sent only the grant, which made a
+  sign-in that plainly succeeded in the web view look as though it had
+  never happened.
 - **Remanga** has no sign-in here. The site authenticates with a bearer
   token rather than a cookie — `/api/v2/users/current/` answers
   `WWW-Authenticate: Bearer realm="api"` — so the web-view flow the other
@@ -199,7 +210,7 @@ setting, and the source API has no sync trait or manifest field at all.
 What a source does decide is whether the synced rows still resolve on the
 other device. The library, chapter and history records are keyed on the
 source id together with the manga and chapter keys, so those keys have to
-mean the same thing everywhere and not drift between versions. All six
+mean the same thing everywhere and not drift between versions. All of them
 sources here derive them from the site's own identifiers — WaManga from the
 API's ids, AComics from the permanent `~slug`, Com-X from the numeric id
 the URL carries, Remanga from the title's `dir` — with no device, session
@@ -344,6 +355,14 @@ endpoints actually return:
   listing indefinitely on an iPad while the same build worked on a phone,
   so nothing in the fetch path is allowed to block without a bound: the
   poll is the only wait, and it always ends in a page or an error.
+
+  Telling the gate apart from an empty page matters more than it sounds.
+  A page used to be accepted only if it carried a card marker, so a search
+  with no hits, a page past the end, or a title that had been removed all
+  looked exactly like a block: thirty seconds in the web view and then an
+  error blaming the sign-in. The interstitial is now recognised on its own
+  terms — it posts its proof of work to `/_v` — and anything else is taken
+  as a real answer, empty or not.
 
   What the grant expiring looks like, confirmed on a device: a comic's
   details spin without ever arriving, its chapter list comes up empty, and
