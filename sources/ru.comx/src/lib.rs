@@ -98,33 +98,94 @@ const HOME_GENRES: &[(&str, &str)] = &[
 
 // MARK: - Embedded page data
 
+/// A scalar as the payload actually delivers it.
+///
+/// The embedded JSON is not consistent about shape: a number can arrive
+/// quoted, and a field the site has nothing for arrives as `null` rather
+/// than being left out. A typed field makes any one of those fail the
+/// whole document, and because the document carries the chapter list the
+/// failure used to take the title, cover and description down with it. So
+/// every scalar is read loosely here and interpreted afterwards.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum Loose {
+	Number(f64),
+	Text(String),
+	/// Anything else, kept only so that deserializing cannot fail.
+	Other(#[allow(dead_code)] serde_json::Value),
+}
+
+impl Loose {
+	fn as_i64(&self) -> Option<i64> {
+		match self {
+			Loose::Number(value) => Some(*value as i64),
+			Loose::Text(text) => text.trim().parse::<i64>().ok(),
+			Loose::Other(_) => None,
+		}
+	}
+
+	fn as_f32(&self) -> Option<f32> {
+		match self {
+			Loose::Number(value) => Some(*value as f32),
+			Loose::Text(text) => text.trim().parse::<f32>().ok(),
+			Loose::Other(_) => None,
+		}
+	}
+
+	fn as_text(&self) -> Option<&str> {
+		match self {
+			Loose::Text(text) => Some(text.as_str()),
+			_ => None,
+		}
+	}
+}
+
 #[derive(Deserialize)]
 struct DetailData {
-	news_id: i64,
 	#[serde(default)]
-	chapters: Vec<ChapterEntry>,
+	news_id: Option<Loose>,
+	/// Left undecoded on purpose: entries are read one at a time below, so
+	/// a single chapter the payload describes oddly is dropped instead of
+	/// emptying the list.
+	#[serde(default)]
+	chapters: Vec<serde_json::Value>,
 }
 
 #[derive(Deserialize)]
 struct ChapterEntry {
-	id: i64,
+	#[serde(default)]
+	id: Option<Loose>,
 	/// Position in the series, counting up from the first chapter.
 	#[serde(default)]
-	posi: i32,
+	posi: Option<Loose>,
 	#[serde(default)]
+	volume: Option<Loose>,
+	#[serde(default)]
+	number: Option<Loose>,
+	/// Usually just restates the number, but a collected edition is
+	/// labelled with the range it covers, e.g. `1 - 13`.
+	#[serde(default)]
+	title: Option<Loose>,
+	#[serde(default)]
+	date: Option<Loose>,
+}
+
+/// One chapter, once the payload has been made sense of.
+struct ChapterRow {
+	id: i64,
+	posi: f32,
 	volume: f32,
-	#[serde(default)]
-	number: f32,
-	#[serde(default)]
-	date: String,
+	number: Option<f32>,
+	title: Option<String>,
+	date: Option<String>,
 }
 
 #[derive(Deserialize)]
 struct ReaderData {
 	#[serde(default)]
-	images: Vec<String>,
+	images: Vec<Loose>,
 	#[serde(default)]
-	host: String,
+	host: Option<Loose>,
 }
 
 // MARK: - Networking
@@ -599,6 +660,56 @@ fn labelled_value<'a>(rows: &'a [(String, String)], label: &str) -> Option<&'a s
 }
 
 /// Parses the cards shared by the catalog and the search results.
+/// Builds the url of one chapter image.
+///
+/// The reader payload names a bare CDN host and a path relative to one
+/// directory on it, and that is all it has ever been seen to carry. None of
+/// it is guaranteed though, and a stray slash or scheme used to produce a
+/// url with a doubled separator that fetches nothing, so each part is
+/// trimmed back to the shape the join expects.
+fn image_url(host: &str, path: &str) -> String {
+	let path = path.trim();
+	if path.starts_with("https://") || path.starts_with("http://") {
+		return String::from(path);
+	}
+
+	let host = host.trim().trim_end_matches('/');
+	let host = host
+		.strip_prefix("https://")
+		.or_else(|| host.strip_prefix("http://"))
+		.unwrap_or(host);
+	let host = if host.is_empty() { IMAGE_HOST } else { host };
+
+	let path = path.trim_start_matches('/');
+	let carries_prefix = path
+		.strip_prefix(IMAGE_PREFIX)
+		.is_some_and(|rest| rest.starts_with('/'));
+
+	if carries_prefix {
+		format!("https://{host}/{path}")
+	} else {
+		format!("https://{host}/{IMAGE_PREFIX}/{path}")
+	}
+}
+
+/// Picks the chapter title worth showing.
+///
+/// Most entries only restate the number the app already prints, as `# 4`
+/// or `4`, and repeating it beside the number is noise. A collected
+/// edition is labelled with the range it covers instead, e.g. `1 - 13`,
+/// and that is the one thing telling it apart from chapter 1.
+fn chapter_title(raw: Option<&str>, number: Option<f32>) -> Option<String> {
+	let title = raw.map(str::trim).filter(|title| !title.is_empty())?;
+
+	if let (Ok(value), Some(number)) = (title.trim_start_matches('#').trim().parse::<f32>(), number)
+		&& (value - number).abs() < f32::EPSILON
+	{
+		return None;
+	}
+
+	Some(String::from(title))
+}
+
 fn parse_cards(html: &Document) -> Vec<Manga> {
 	let Some(cards) = html.select("div.readed.d-flex.short") else {
 		return Vec::new();
@@ -773,7 +884,6 @@ impl Source for ComX {
 	) -> Result<Manga> {
 		let body = fetch(&format!("{BASE_URL}/{}.html", manga.key), DATA_MARKER)?;
 		let html = Html::parse(&body)?;
-		let data: DetailData = parse_embedded(&body)?;
 
 		if needs_details {
 			manga.url = Some(format!("{BASE_URL}/{}.html", manga.key));
@@ -891,24 +1001,74 @@ impl Source for ComX {
 		}
 
 		if needs_chapters {
-			let news_id = data.news_id;
-			let mut entries = data.chapters;
+			// Parsed here rather than above: a details-only refresh has no
+			// use for this and should not fail when the chapter payload is
+			// the part that is malformed.
+			let data: DetailData = parse_embedded(&body)?;
+
+			// The id leading the manga key is the same id the payload names,
+			// and taking it from the key first means a payload that omits or
+			// retypes `news_id` no longer costs the whole chapter list.
+			let news_id = match news_id(&manga.key) {
+				Some(id) => String::from(id),
+				None => data
+					.news_id
+					.as_ref()
+					.and_then(Loose::as_i64)
+					.ok_or_else(|| error!("Page has no id to build chapter urls from"))?
+					.to_string(),
+			};
+
+			// One entry at a time, so a chapter the payload describes oddly
+			// is dropped instead of emptying the list. An entry without a
+			// usable id is the only one that has to go: without it there is
+			// no url to open.
+			let mut rows: Vec<ChapterRow> = Vec::new();
+			for value in data.chapters {
+				let Ok(entry) = serde_json::from_value::<ChapterEntry>(value) else {
+					continue;
+				};
+				let Some(id) = entry.id.as_ref().and_then(Loose::as_i64) else {
+					continue;
+				};
+				rows.push(ChapterRow {
+					id,
+					posi: entry.posi.as_ref().and_then(Loose::as_f32).unwrap_or(0.0),
+					volume: entry.volume.as_ref().and_then(Loose::as_f32).unwrap_or(0.0),
+					number: entry.number.as_ref().and_then(Loose::as_f32),
+					title: entry.title.as_ref().and_then(Loose::as_text).map(String::from),
+					date: entry.date.as_ref().and_then(Loose::as_text).map(String::from),
+				});
+			}
 
 			// The payload already arrives newest first, but ordering it here
 			// means a change in that habit cannot quietly reverse the list.
-			entries.sort_by(|a, b| b.posi.cmp(&a.posi));
+			rows.sort_by(|a, b| b.posi.total_cmp(&a.posi));
 
 			manga.chapters = Some(
-				entries
-					.into_iter()
-					.map(|entry| Chapter {
-						key: entry.id.to_string(),
-						chapter_number: Some(entry.number),
-						volume_number: (entry.volume > 0.0).then_some(entry.volume),
-						date_uploaded: parse_date(&entry.date, DATE_FORMAT),
-						url: Some(format!("{BASE_URL}/reader/{news_id}/{}", entry.id)),
-						language: Some(String::from("ru")),
-						..Default::default()
+				rows.into_iter()
+					.map(|row| {
+						// Some series leave `number` at zero on every entry and
+						// carry the ordinal in `posi` instead, which showed up as
+						// a shelf of chapters all called "Chapter 0".
+						let number = row
+							.number
+							.filter(|number| *number > 0.0)
+							.or(Some(row.posi).filter(|posi| *posi > 0.0));
+
+						Chapter {
+							key: row.id.to_string(),
+							title: chapter_title(row.title.as_deref(), number),
+							chapter_number: number,
+							volume_number: (row.volume > 0.0).then_some(row.volume),
+							date_uploaded: row
+								.date
+								.as_deref()
+								.and_then(|date| parse_date(date, DATE_FORMAT)),
+							url: Some(format!("{BASE_URL}/reader/{news_id}/{}", row.id)),
+							language: Some(String::from("ru")),
+							..Default::default()
+						}
 					})
 					.collect(),
 			);
@@ -926,24 +1086,22 @@ impl Source for ComX {
 			DATA_MARKER,
 		)?;
 		let ReaderData { images, host } = parse_embedded(&body)?;
+		let host = host.as_ref().and_then(Loose::as_text).unwrap_or(IMAGE_HOST);
 
-		if images.is_empty() {
+		let pages: Vec<Page> = images
+			.iter()
+			.filter_map(Loose::as_text)
+			.map(|path| Page {
+				content: PageContent::url(image_url(host, path)),
+				..Default::default()
+			})
+			.collect();
+
+		if pages.is_empty() {
 			bail!("Chapter has no pages");
 		}
 
-		let host = if host.is_empty() {
-			String::from(IMAGE_HOST)
-		} else {
-			host
-		};
-
-		Ok(images
-			.into_iter()
-			.map(|path| Page {
-				content: PageContent::url(format!("https://{host}/{IMAGE_PREFIX}/{path}")),
-				..Default::default()
-			})
-			.collect())
+		Ok(pages)
 	}
 }
 

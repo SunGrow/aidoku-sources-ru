@@ -302,8 +302,13 @@ endpoints actually return:
   markup is the hard part — see the challenge note below.
 
   Catalog filters are path segments, `/ComicList/g=17/page/2/`. A key takes
-  several values as a comma separated list and the site returns the titles
-  carrying all of them. The other separators are traps that fail silently:
+  several values as a comma separated list, and on the genre key the site
+  returns the titles carrying all of them. Whether the status and type keys
+  intersect their values the same way has not been checked — if they do,
+  picking two statuses can only ever return nothing, since a comic has one.
+  Both are left multi-select until that is measured rather than guessed at,
+  because narrowing them would throw away a union that may well work. The
+  other separators are traps that fail silently:
   `g=17/g=76` keeps only the last value and `g=17;76` only the first, both
   without an error. The year filter is an exact year rather than a range —
   its comma form keeps only the first value too.
@@ -388,6 +393,39 @@ endpoints actually return:
   `mod=reader&method=reader/chapters&news_id=<id>` returns chapter JSON over
   plain HTTP — but it only yields chapter ids and titles, with no catalog,
   detail or page images, so it is not enough to build on.
+
+  It also needs a live session: without one it answers «Сессия устарела»
+  rather than the chapter list, so it is no use as a way around a lapsed
+  grant either.
+
+  The embedded payload is read loosely. Every scalar in it is taken as
+  «a number, a string, or something else» and interpreted afterwards,
+  because a typed field makes one retyped or null value fail the whole
+  document — and since that document carries the chapter list, the failure
+  took the title, cover and description down with it. Chapters are decoded
+  one entry at a time for the same reason, so a single malformed one is
+  dropped instead of emptying the shelf, and the detail page is only
+  decoded at all when chapters are what was asked for. The id the reader
+  urls need is read from the manga key first, where it already is, so a
+  payload that omits `news_id` no longer costs the list.
+
+  Two payload habits are worth naming. A chapter's `number` is not always
+  set — where it is left at zero the ordinal lives in `posi`, which is
+  otherwise only used for sorting, and taking `number` at face value put a
+  shelf of «Chapter 0» in front of the reader. And a chapter carries a
+  `title` that usually just restates the number as `# 4`, but a collected
+  edition is labelled with the range it covers, `1 - 13`, which is the one
+  thing telling it apart from chapter 1. Titles are kept now, minus the
+  ones that only repeat the number.
+
+  Both of those come from reading Kotatsu's parser for the same site, not
+  from a payload measured here: the gate was up for the whole of that work
+  and the ajax endpoint wanted a session, so nothing could be dumped. The
+  handling is written to be no worse than before when the fields are
+  absent, but which series actually leave `number` at zero is unconfirmed.
+  Kotatsu also sends `adt-accepted=1` and `adult=<news_id>` with its reader
+  requests, which this source does not; whether anything here is gated on
+  them has not been tested.
 
   The year and the publisher are put at the front of the tag list: each
   volume of a run is its own title under a near-identical name, and those
