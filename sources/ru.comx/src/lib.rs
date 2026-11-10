@@ -206,7 +206,8 @@ const COOKIE_KEY: &str = "gate.cookies";
 const LOGIN_COOKIE_KEY: &str = "login.cookies";
 
 /// Settings key of the entry that opens the site in a visible web view
-/// without signing in or out — see `refresh_access`.
+/// without signing in or out — see `refresh_access`. It doubles as the key
+/// the app marks that entry with, which `release_refresh_entry` clears.
 const REFRESH_KEY: &str = "refresh";
 
 /// How many one second polls the web view is given to work through the
@@ -307,6 +308,8 @@ fn with_cookies(request: Request) -> Request {
 /// direct request is tried first for that reason — it is far cheaper, and
 /// once the cookies are warm it is what serves almost every page.
 fn fetch(url: &str, marker: &str) -> Result<String> {
+	release_refresh_entry();
+
 	if let Ok(body) = with_cookies(Request::get(url)?).string() {
 		// The marker says this is the page that was asked for. A body that
 		// carries neither the marker nor the interstitial is still a real
@@ -398,7 +401,7 @@ fn solve_challenge(url: &str, marker: &str) -> Result<String> {
 	// that entry but signing out, and signing out wipes the site's
 	// cookies, so following that advice meant typing the password again.
 	bail!(
-		"Com-X не пропустил запрос. Откройте в настройках источника «Обновить доступ к сайту», дождитесь загрузки сайта и закройте окно — выходить из аккаунта не нужно."
+		"Com-X не пропустил запрос. Откройте в настройках источника «Обновить доступ к сайту» и дождитесь, пока окно закроется само, — выходить из аккаунта не нужно."
 	)
 }
 
@@ -1302,39 +1305,90 @@ fn embedded_string(html: &str, field: &str) -> Option<String> {
 	Some(rest[..end].replace("\\/", "/"))
 }
 
-/// Takes the cookies the refresh entry's web view has just earned.
+/// What the site makes of a request carrying exactly one set of cookies.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Access {
+	/// The challenge answered instead of the page.
+	Blocked,
+	/// The page, served to a visitor who is not signed in.
+	Guest,
+	/// The page, served to a signed-in reader.
+	SignedIn,
+}
+
+/// Reads a catalog response. Anything without the card marker counts as
+/// blocked, the interstitial included: the question being asked is whether
+/// these cookies get a reader to the pages, and nothing short of a served
+/// catalog says that they do.
+fn classify_access(body: Option<&str>) -> Access {
+	match body {
+		Some(body) if body.contains(LIST_MARKER) => {
+			if body.contains("\"is_logged\":true") {
+				Access::SignedIn
+			} else {
+				Access::Guest
+			}
+		}
+		_ => Access::Blocked,
+	}
+}
+
+/// Asks the site about these cookies alone, over plain HTTP only.
 ///
-/// That web view is visible, so it clears the challenge the background
-/// one cannot, and it uses the same store as the sign-in sheet. Its
-/// cookies always become the grant. They replace the login jar only when
-/// the reader is signed in through the account entry and the new cookies
-/// are signed in as well: the login jar wins on the session cookies, so
-/// leaving it alone would keep a lapsed session going out, while on
-/// systems where this web view opens as a guest taking its cookies would
-/// sign the reader out.
-fn refresh_access(header: String) {
-	// The app reports every change to the store, including ones that leave
-	// this site's cookies as they were; there is nothing to do for those.
-	if header.is_empty() || stored_cookies().as_deref() == Some(header.as_str()) {
-		return;
-	}
-	defaults_set(COOKIE_KEY, DefaultValue::String(header.clone()));
-
-	if stored_login().is_none() {
-		return;
-	}
-
-	// Asked with these cookies alone, and over plain HTTP only: while the
-	// challenge is still running this simply comes back as the gate, which
-	// reads as not signed in, and a later change asks again.
-	let signed_in = Request::get(&format!("{BASE_URL}/ComicList/"))
+/// This is what the sign-in sheets use to decide whether they are done, and
+/// it must never fall back to the background web view the way `fetch`
+/// does. The app runs a source's calls one at a time and calls the handler
+/// on every change to the cookie store, so a check that could spend thirty
+/// seconds in that web view held each later change up behind it: the sheet
+/// went on waiting long after the reader had signed in. The sheet is
+/// visible and clears the challenge itself; until it has, this answers
+/// `Blocked` straight away and the next change asks again.
+fn probe_access(header: &str) -> Access {
+	let body = Request::get(&format!("{BASE_URL}/ComicList/"))
 		.ok()
-		.and_then(|request| request.header("Cookie", header.as_str()).string().ok())
-		.is_some_and(|body| body.contains("\"is_logged\":true"));
+		.and_then(|request| request.header("Cookie", header).string().ok());
+	classify_access(body.as_deref())
+}
 
-	if signed_in {
-		defaults_set(LOGIN_COOKIE_KEY, DefaultValue::String(header));
+/// Lets the app offer the refresh entry again.
+///
+/// Reporting a refresh as done is the only way to have the app close the
+/// sheet, and the app then marks the entry signed in, after which tapping
+/// it would only offer to sign out. That mark is the entry's own settings
+/// key, which shares this source's defaults namespace, so it is removed
+/// here; this runs on the next page the source fetches, since the app sets
+/// the mark only after the handler has returned.
+fn release_refresh_entry() {
+	if defaults_get::<String>(REFRESH_KEY).is_some_and(|mark| !mark.is_empty()) {
+		defaults_set(REFRESH_KEY, DefaultValue::Null);
 	}
+}
+
+/// Handles the refresh entry: a visible web view on the site, in the same
+/// cookie store as the sign-in sheet, opened to clear the challenge the
+/// background web view cannot.
+///
+/// Returns whether the cookies now get through, which closes the sheet.
+/// They become the grant once they do. They replace the login jar only when
+/// the reader is signed in through the account entry and the site says these
+/// cookies are signed in too: the login jar wins on the session cookies, so
+/// leaving it alone would keep a lapsed session going out, while on systems
+/// where this web view opens as a guest taking its cookies would sign the
+/// reader out.
+fn refresh_access(header: &str) -> bool {
+	if header.is_empty() {
+		return false;
+	}
+	let access = probe_access(header);
+	if access == Access::Blocked {
+		return false;
+	}
+
+	defaults_set(COOKIE_KEY, DefaultValue::String(String::from(header)));
+	if access == Access::SignedIn && stored_login().is_some() {
+		defaults_set(LOGIN_COOKIE_KEY, DefaultValue::String(String::from(header)));
+	}
+	true
 }
 
 impl WebLoginHandler for ComX {
@@ -1350,50 +1404,38 @@ impl WebLoginHandler for ComX {
 		}
 
 		if key == REFRESH_KEY {
-			refresh_access(header);
-			// Never reported as a sign-in. The app would then mark this entry
-			// as signed in and offer nothing on it but signing out, which is
-			// the dead end the entry exists to avoid; the reader closes the
-			// sheet instead.
-			return Ok(false);
+			return Ok(refresh_access(&header));
 		}
 
-		if !header.is_empty() {
-			// Whatever the reader opened this sheet to do, it is a visible web
-			// view that has just cleared the challenge, so its cookies are the
-			// freshest grant the source is going to get. Storing them as the
-			// grant as well is what makes the advice in the fetch error true:
-			// opening this sheet refreshes the grant even if nobody signs in.
-			defaults_set(COOKIE_KEY, DefaultValue::String(header.clone()));
-			// These are the whole point of the exercise. Dropping them leaves
-			// the source requesting every page as a guest, which is what makes
-			// a login that plainly succeeded look as though it never happened.
-			defaults_set(LOGIN_COOKIE_KEY, DefaultValue::String(header));
+		if header.is_empty() {
+			return Ok(false);
 		}
 
 		// The session cookie's name is not documented, so rather than guess at
 		// one, ask the site: every catalog page states the signed-in state in
-		// the filter payload it embeds. This runs through the ordinary fetch,
-		// so it is answered with the cookies just stored and reports what the
-		// source will actually get from here on rather than what the web view
-		// alone can see.
-		let Ok(body) = fetch(&format!("{BASE_URL}/ComicList/"), LIST_MARKER) else {
-			// The question could not be put. The cookies above are already
-			// stored, and throwing them away over one failed request would
-			// undo a sign-in that may well have worked.
-			return Ok(false);
-		};
-		let logged_in = body.contains("\"is_logged\":true");
-
-		// Not signed in means either that the login did not take or that this
-		// call is a logout; which of the two it is cannot be told apart here,
-		// and in both cases the login cookies are not worth sending again.
-		// The grant stored above is, so it stays.
-		if !logged_in {
-			defaults_set(LOGIN_COOKIE_KEY, DefaultValue::String(String::new()));
+		// the filter payload it embeds.
+		match probe_access(&header) {
+			// The sheet has not cleared the challenge yet. Nothing here is
+			// worth keeping, and a later change asks again.
+			Access::Blocked => Ok(false),
+			// Through the challenge but not signed in: the login has not
+			// happened yet, or did not take, or this is a sign-out. These
+			// cookies are still the freshest grant there is, so they are
+			// kept as one; the login jar is not worth sending again.
+			Access::Guest => {
+				defaults_set(COOKIE_KEY, DefaultValue::String(header));
+				defaults_set(LOGIN_COOKIE_KEY, DefaultValue::String(String::new()));
+				Ok(false)
+			}
+			// Dropping these leaves the source requesting every page as a
+			// guest, which is what makes a login that plainly succeeded look
+			// as though it never happened. Reporting it closes the sheet.
+			Access::SignedIn => {
+				defaults_set(COOKIE_KEY, DefaultValue::String(header.clone()));
+				defaults_set(LOGIN_COOKIE_KEY, DefaultValue::String(header));
+				Ok(true)
+			}
 		}
-
-		Ok(logged_in)
 	}
 }
 

@@ -405,11 +405,26 @@ endpoints actually return:
   So refreshing the grant meant signing out, which wiped the sign-in, and
   signing in again with the password. A second web entry, «Обновить
   доступ к сайту», now opens the same site in the same store without
-  touching the sign-in. Its handler stores whatever the visit earns as
-  the grant, replaces the login jar too when the reader is signed in and
-  the new cookies are as well, and never reports success, so the app
-  never marks the entry and it can be opened again any time. The fetch
-  error names that entry.
+  touching the sign-in. The fetch error names that entry.
+
+  Both sheets decide they are done by asking the site about the sheet's
+  cookies alone, with one plain request: blocked by the challenge, served
+  to a guest, or served signed in. The refresh sheet closes as soon as the
+  cookies get through, and the sign-in sheet once they are signed in. The
+  check never falls back to the background web view. The app runs a
+  source's calls one at a time (AidokuRunner's `Interpreter` is an actor)
+  and calls the handler on every change to the store, so the earlier
+  check, which went through `fetch`, could spend thirty seconds in that
+  web view per change while the sheet sat open behind it.
+
+  Closing a sheet means reporting success, and the app then marks the
+  entry signed in, after which tapping it only offers to sign out. The
+  mark is the entry's own settings key (`ru.comx.refresh`), and the app
+  keeps a source's settings and its defaults in one namespace, so the
+  source removes the mark itself on the next page it fetches. Until then
+  the entry carries the same title as a sign-out label; tapping it in that
+  window shows the app's sign-out prompt, which for this entry clears
+  nothing but the mark.
 
   Assumption: what makes the grant lapse. The `/_c` token is five fields
   — the client's IP address, a Unix timestamp, a `1`, a short nonce and a
