@@ -205,6 +205,10 @@ const COOKIE_KEY: &str = "gate.cookies";
 /// cannot quietly sign the user back out.
 const LOGIN_COOKIE_KEY: &str = "login.cookies";
 
+/// Settings key of the entry that opens the site in a visible web view
+/// without signing in or out — see `refresh_access`.
+const REFRESH_KEY: &str = "refresh";
+
 /// How many one second polls the web view is given to work through the
 /// challenge before giving up on it. The page load is no longer waited
 /// for separately, so this budget has to cover it as well.
@@ -231,9 +235,11 @@ fn stored_login() -> Option<String> {
 /// and the snapshot covered it straight back up, so the source could
 /// never recover on its own and only signing in again ever fixed it.
 ///
-/// The exception is the cookies carrying the sign-in itself. The web view
-/// that solves the challenge need not be signed in, so taking its copy of
-/// those could quietly sign the reader out.
+/// The exception is the cookies carrying the sign-in itself. From iOS 17
+/// the solving web view shares the sign-in sheet's cookie store, so its
+/// copy is current; before that every web view gets a fresh store and
+/// solves as a guest, and taking its copy would sign the reader out. The
+/// login jar is brought up to date by `refresh_access` instead.
 fn request_cookies() -> Option<String> {
 	let mut merged: Vec<(String, String)> = Vec::new();
 
@@ -387,12 +393,12 @@ fn solve_challenge(url: &str, marker: &str) -> Result<String> {
 		}
 	}
 
-	// Saying so plainly: a background web view cannot always clear this
-	// gate, and the reader has no way to guess that signing in once
-	// through the web view is what refreshes the grant that unblocks
-	// every plain request after it.
+	// Saying so plainly, and naming the entry that fixes it. The sign-in
+	// sheet is no answer here: while signed in the app offers nothing on
+	// that entry but signing out, and signing out wipes the site's
+	// cookies, so following that advice meant typing the password again.
 	bail!(
-		"Com-X did not let this request through. Open the source's web view sign-in once to refresh its cookies, then try again."
+		"Com-X не пропустил запрос. Откройте в настройках источника «Обновить доступ к сайту», дождитесь загрузки сайта и закройте окно — выходить из аккаунта не нужно."
 	)
 }
 
@@ -1296,8 +1302,43 @@ fn embedded_string(html: &str, field: &str) -> Option<String> {
 	Some(rest[..end].replace("\\/", "/"))
 }
 
+/// Takes the cookies the refresh entry's web view has just earned.
+///
+/// That web view is visible, so it clears the challenge the background
+/// one cannot, and it uses the same store as the sign-in sheet. Its
+/// cookies always become the grant. They replace the login jar only when
+/// the reader is signed in through the account entry and the new cookies
+/// are signed in as well: the login jar wins on the session cookies, so
+/// leaving it alone would keep a lapsed session going out, while on
+/// systems where this web view opens as a guest taking its cookies would
+/// sign the reader out.
+fn refresh_access(header: String) {
+	// The app reports every change to the store, including ones that leave
+	// this site's cookies as they were; there is nothing to do for those.
+	if header.is_empty() || stored_cookies().as_deref() == Some(header.as_str()) {
+		return;
+	}
+	defaults_set(COOKIE_KEY, DefaultValue::String(header.clone()));
+
+	if stored_login().is_none() {
+		return;
+	}
+
+	// Asked with these cookies alone, and over plain HTTP only: while the
+	// challenge is still running this simply comes back as the gate, which
+	// reads as not signed in, and a later change asks again.
+	let signed_in = Request::get(&format!("{BASE_URL}/ComicList/"))
+		.ok()
+		.and_then(|request| request.header("Cookie", header.as_str()).string().ok())
+		.is_some_and(|body| body.contains("\"is_logged\":true"));
+
+	if signed_in {
+		defaults_set(LOGIN_COOKIE_KEY, DefaultValue::String(header));
+	}
+}
+
 impl WebLoginHandler for ComX {
-	fn handle_web_login(&self, _key: String, cookies: HashMap<String, String>) -> Result<bool> {
+	fn handle_web_login(&self, key: String, cookies: HashMap<String, String>) -> Result<bool> {
 		let mut header = String::new();
 		for (name, value) in cookies.iter() {
 			if !header.is_empty() {
@@ -1306,6 +1347,15 @@ impl WebLoginHandler for ComX {
 			header.push_str(name);
 			header.push('=');
 			header.push_str(value);
+		}
+
+		if key == REFRESH_KEY {
+			refresh_access(header);
+			// Never reported as a sign-in. The app would then mark this entry
+			// as signed in and offer nothing on it but signing out, which is
+			// the dead end the entry exists to avoid; the reader closes the
+			// sheet instead.
+			return Ok(false);
 		}
 
 		if !header.is_empty() {

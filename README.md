@@ -383,11 +383,41 @@ endpoints actually return:
   meant to spot automation, which is reason enough to leave it to the web
   view that runs the site's own script rather than reimplementing it here.
 
-  The grant is refreshed by opening the source's web view sign-in once,
-  which clears the gate in a visible browser and stores the cookies; the
-  plain-HTTP path works again immediately afterwards. Since a background
-  web view cannot be relied on to clear it, the error says that in as many
-  words rather than leaving an empty chapter list to be puzzled over.
+  The grant has to be refreshed in a visible web view, and the sign-in
+  sheet used to be the only one the source had. That was a dead end once
+  signed in. Read from the app (Aidoku `SettingView.swift`, AidokuRunner
+  `WebViewHandler.swift` and `WKWebsiteDataStore.swift`):
+
+  - a login entry that is marked signed in offers nothing but signing
+    out, so the sheet cannot be opened again without signing out first;
+  - signing out removes the app's own login keys and, with
+    `clearCookiesOnLogOut`, every cookie in the source's web store —
+    the site's sign-in included — but never calls into the source;
+  - the sheet and the source's background web view share that store
+    from iOS 17 on (`WKWebsiteDataStore(forIdentifier:)` keyed by the
+    source id); before iOS 17 each gets a fresh non-persistent store;
+  - `handle_web_login` runs on every change to the store while a sheet
+    is open, with the setting's key, and a `true` closes the sheet and
+    marks the entry signed in;
+  - the app's own challenge screen only reacts to Cloudflare, and a
+    `link` entry opens Safari, whose cookies the source never sees.
+
+  So refreshing the grant meant signing out, which wiped the sign-in, and
+  signing in again with the password. A second web entry, «Обновить
+  доступ к сайту», now opens the same site in the same store without
+  touching the sign-in. Its handler stores whatever the visit earns as
+  the grant, replaces the login jar too when the reader is signed in and
+  the new cookies are as well, and never reports success, so the app
+  never marks the entry and it can be opened again any time. The fetch
+  error names that entry.
+
+  Assumption: what makes the grant lapse. The `/_c` token is five fields
+  — the client's IP address, a Unix timestamp, a `1`, a short nonce and a
+  32-hex-digit digest — so a grant that ends with a timer or with a change
+  of network would fit, but neither has been measured. Also not
+  established is why the background web view does not clear the gate on
+  its own; that it does not is the field report, not something observed
+  here.
 
   One endpoint escapes the challenge — `/engine/ajax/controller.php` with
   `mod=reader&method=reader/chapters&news_id=<id>` returns chapter JSON over
